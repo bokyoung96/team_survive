@@ -20,3 +20,10 @@ class Repository(Protocol):
 
     def save(self, data: pd.DataFrame, symbol: Symbol, timeframe: TimeFrame) -> None:
         ...
+
+
+class TechnicalIndicator(Protocol):
+    name: str
+
+    def calculate(self, ohlcv: pd.DataFrame) -> pd.DataFrame:
+        ...

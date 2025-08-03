@@ -1,12 +1,9 @@
 from __future__ import annotations
 import pandas as pd
 from typing import Optional
-from pathlib import Path
-from datetime import datetime
 
-from models import Symbol, TimeFrame, TimeRange, DataType, Exchange, MarketType
+from models import Symbol, TimeFrame, TimeRange, DataType
 from factory import Factory
-from tools import parse_symbol
 
 
 class DataLoader:
@@ -24,13 +21,28 @@ class DataLoader:
     ) -> pd.DataFrame:
         if not force_download:
             data = self._repository.load(symbol, timeframe, data_type)
-            if data is not None and self._is_data_sufficient(data, time_range):
-                return data
+            if data is not None:
+                saved_data = self._set_dt_idx(data)
+                if self._is_data_sufficient(saved_data, time_range):
+                    return saved_data
 
         fetcher = self._factory.create_fetcher(data_type)
         fetched_data = fetcher.fetch(symbol, timeframe, time_range)
+
+        if fetched_data.empty:
+            return fetched_data
+
         self._repository.save(fetched_data, symbol, timeframe, data_type)
-        return fetched_data
+        return self._set_dt_idx(fetched_data)
+
+    def _set_dt_idx(self, data: pd.DataFrame) -> pd.DataFrame:
+        if "timestamp" not in data.columns:
+            return data
+
+        df = data.copy()
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+        df = df.set_index("timestamp")
+        return df
 
     def _is_data_sufficient(
         self, data: pd.DataFrame, time_range: Optional[TimeRange]
@@ -39,23 +51,6 @@ class DataLoader:
             return True
         return (
             not data.empty
-            and data["timestamp"].min() <= time_range.start
-            and data["timestamp"].max() >= time_range.end
+            and data.index.min() <= time_range.start
+            and data.index.max() >= time_range.end
         )
-
-
-if __name__ == "__main__":
-    exchange = Exchange(id="binance", default_type=MarketType.SWAP)
-    factory = Factory(exchange=exchange, base_path=Path("./data"))
-    loader = DataLoader(factory=factory)
-
-    symbol = parse_symbol("BTC/USDT:USDT")
-    time_range = TimeRange(start=datetime(2023, 1, 1),
-                           end=datetime(2025, 8, 3))
-
-    data = loader.load(
-        symbol=symbol,
-        timeframe=TimeFrame.M5,
-        data_type=DataType.OHLCV,
-        time_range=time_range,
-    )
