@@ -20,10 +20,12 @@ class DataLoader:
         timeframe: TimeFrame,
         data_type: DataType,
         time_range: Optional[TimeRange] = None,
+        force_download: bool = False,
     ) -> pd.DataFrame:
-        data = self._repository.load(symbol, timeframe, data_type)
-        if data is not None and self._is_data_sufficient(data, time_range):
-            return data
+        if not force_download:
+            data = self._repository.load(symbol, timeframe, data_type)
+            if data is not None and self._is_data_sufficient(data, time_range):
+                return data
 
         fetcher = self._factory.create_fetcher(data_type)
         fetched_data = fetcher.fetch(symbol, timeframe, time_range)
@@ -51,11 +53,9 @@ if __name__ == "__main__":
     time_range = TimeRange(start=datetime(2023, 1, 1),
                            end=datetime(2025, 8, 3))
 
-    ohlcv_data = loader.load(
+    data = loader.load(
         symbol=symbol,
         timeframe=TimeFrame.M5,
         data_type=DataType.OHLCV,
         time_range=time_range,
     )
-
-    print(f"Loaded OHLCV data shape: {ohlcv_data.head()}")
