@@ -1,5 +1,4 @@
 import pandas as pd
-import pandas_ta as ta
 from typing import List, Dict
 
 from protocols import TechnicalIndicator
@@ -13,26 +12,27 @@ class IchimokuCloud:
         self._senkou = senkou
 
     def calculate(self, ohlcv: pd.DataFrame) -> pd.DataFrame:
-        ichimoku_df = ta.ichimoku(
-            high=ohlcv['high'],
-            low=ohlcv['low'],
-            close=ohlcv['close'],
-            tenkan=self._tenkan,
-            kijun=self._kijun,
-            senkou=self._senkou
-        )[0]
+        high = ohlcv['high']
+        low = ohlcv['low']
+        close = ohlcv['close']
 
-        col_map = {
-            f'ITS_{self._tenkan}': f'{self.name}_conversion_line',
-            f'IKS_{self._kijun}': f'{self.name}_base_line',
-            f'ISA_{self._tenkan}': f'{self.name}_leading_span_a',
-            f'ISB_{self._kijun}': f'{self.name}_leading_span_b',
-            f'ICS_{self._kijun}': f'{self.name}_lagging_span'
-        }
+        tenkan_sen = (high.rolling(window=self._tenkan).max() +
+                      low.rolling(window=self._tenkan).min()) / 2
+        kijun_sen = (high.rolling(window=self._kijun).max() +
+                     low.rolling(window=self._kijun).min()) / 2
+        senkou_span_a = ((tenkan_sen + kijun_sen) / 2).shift(self._kijun)
+        senkou_span_b = ((high.rolling(window=self._senkou).max(
+        ) + low.rolling(window=self._senkou).min()) / 2).shift(self._kijun)
+        chikou_span = close.shift(-self._kijun)
 
-        found_cols = {k: v for k, v in col_map.items()
-                      if k in ichimoku_df.columns}
-        return ichimoku_df[list(found_cols.keys())].rename(columns=found_cols)
+        df = pd.DataFrame({
+            f'{self.name}_conversion_line': tenkan_sen,
+            f'{self.name}_base_line': kijun_sen,
+            f'{self.name}_leading_span_a': senkou_span_a,
+            f'{self.name}_leading_span_b': senkou_span_b,
+            f'{self.name}_lagging_span': chikou_span
+        })
+        return df
 
 
 class VolumeProfile:
@@ -60,7 +60,7 @@ class MovingAverage:
         self._length = length
 
     def calculate(self, ohlcv: pd.DataFrame) -> pd.DataFrame:
-        ma = ta.sma(ohlcv['close'], length=self._length)
+        ma = ohlcv['close'].rolling(window=self._length).mean()
         return pd.DataFrame({self.name: ma})
 
 
@@ -70,7 +70,17 @@ class RSI:
         self._length = length
 
     def calculate(self, ohlcv: pd.DataFrame) -> pd.DataFrame:
-        rsi = ta.rsi(ohlcv['close'], length=self._length)
+        close_delta = ohlcv['close'].diff()
+        up = close_delta.clip(lower=0)
+        down = -1 * close_delta.clip(upper=0)
+
+        ma_up = up.ewm(com=self._length - 1, adjust=True,
+                       min_periods=self._length).mean()
+        ma_down = down.ewm(com=self._length - 1, adjust=True,
+                           min_periods=self._length).mean()
+
+        rsi = ma_up / ma_down
+        rsi = 100 - (100 / (1 + rsi))
         return pd.DataFrame({self.name: rsi})
 
 
@@ -82,19 +92,19 @@ class MACD:
         self._signal = signal
 
     def calculate(self, ohlcv: pd.DataFrame) -> pd.DataFrame:
-        macd_df = ta.macd(
-            ohlcv['close'],
-            fast=self._fast,
-            slow=self._slow,
-            signal=self._signal
-        )
+        ema_fast = ohlcv['close'].ewm(span=self._fast, adjust=False).mean()
+        ema_slow = ohlcv['close'].ewm(span=self._slow, adjust=False).mean()
 
-        column_names = {
-            f'MACD_{self._fast}_{self._slow}_{self._signal}': f'{self.name}',
-            f'MACDh_{self._fast}_{self._slow}_{self._signal}': f'{self.name}_hist',
-            f'MACDs_{self._fast}_{self._slow}_{self._signal}': f'{self.name}_signal'
-        }
-        return macd_df.rename(columns=column_names)
+        macd_line = ema_fast - ema_slow
+        signal_line = macd_line.ewm(span=self._signal, adjust=False).mean()
+        histogram = macd_line - signal_line
+
+        df = pd.DataFrame({
+            f'{self.name}': macd_line,
+            f'{self.name}_hist': histogram,
+            f'{self.name}_signal': signal_line
+        })
+        return df
 
 
 class IndicatorProcessor:
