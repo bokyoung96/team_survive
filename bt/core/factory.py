@@ -3,8 +3,8 @@ from pathlib import Path
 
 from models import Exchange, DataType
 from protocols import DataFetcher, Repository
-from fetchers import OHLCVFetcher
-from repository import RegistryOrchestrator
+from data.fetchers import OHLCVFetcher
+from storage.repository import RepositoryManager
 
 
 class Factory:
@@ -18,4 +18,4 @@ class Factory:
         raise ValueError(f"Unsupported data type: {data_type}")
 
     def create_repository(self) -> Repository:
-        return RegistryOrchestrator(self._base_path, self._exchange)
+        return RepositoryManager(self._base_path, self._exchange)

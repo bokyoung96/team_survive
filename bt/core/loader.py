@@ -38,15 +38,12 @@ class DataLoader:
     def _set_dt_idx(self, data: pd.DataFrame) -> pd.DataFrame:
         if "timestamp" not in data.columns:
             return data
-
         df = data.copy()
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
         df = df.set_index("timestamp")
         return df
 
-    def _is_data_sufficient(
-        self, data: pd.DataFrame, time_range: Optional[TimeRange]
-    ) -> bool:
+    def _is_data_sufficient(self, data: pd.DataFrame, time_range: Optional[TimeRange]) -> bool:
         if time_range is None:
             return True
         return (

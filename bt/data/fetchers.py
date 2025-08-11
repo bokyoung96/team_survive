@@ -4,9 +4,9 @@ import pandas as pd
 from tqdm import tqdm
 from typing import Optional, List, Any
 
-from models import Exchange, Symbol, TimeFrame, TimeRange, MarketType
-from protocols import DataFetcher
-from tools import convert_ts_to_dt
+from core.models import Exchange, Symbol, TimeFrame, TimeRange, MarketType
+from core.protocols import DataFetcher
+from utils.tools import convert_ts_to_dt
 
 
 class OHLCVFetcher(DataFetcher):
@@ -35,7 +35,7 @@ class OHLCVFetcher(DataFetcher):
     ) -> pd.DataFrame:
         start_ts = int(time_range.start.timestamp() * 1000)
         end_ts = int(time_range.end.timestamp() * 1000)
-        all_ohlcv = []
+        all_ohlcv: List[List[Any]] = []
 
         with tqdm(desc=f"Fetching {symbol_str}") as pbar:
             since = start_ts
@@ -61,10 +61,7 @@ class OHLCVFetcher(DataFetcher):
     def _to_df(self, ohlcv: List[List[Any]]) -> pd.DataFrame:
         if not ohlcv:
             return pd.DataFrame()
-
         df = pd.DataFrame(
-            ohlcv, columns=["timestamp", "open",
-                            "high", "low", "close", "volume"]
-        )
+            ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"])
         df["timestamp"] = df["timestamp"].apply(convert_ts_to_dt)
         return df

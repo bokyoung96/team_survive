@@ -1,7 +1,8 @@
+from __future__ import annotations
 import pandas as pd
 from typing import Protocol, Optional
 
-from models import Symbol, TimeFrame, TimeRange
+from models import Symbol, TimeFrame, TimeRange, DataType
 
 
 class DataFetcher(Protocol):
@@ -15,10 +16,10 @@ class DataFetcher(Protocol):
 
 
 class Repository(Protocol):
-    def load(self, symbol: Symbol, timeframe: TimeFrame) -> Optional[pd.DataFrame]:
+    def load(self, symbol: Symbol, timeframe: TimeFrame, data_type: DataType) -> Optional[pd.DataFrame]:
         ...
 
-    def save(self, data: pd.DataFrame, symbol: Symbol, timeframe: TimeFrame) -> None:
+    def save(self, data: pd.DataFrame, symbol: Symbol, timeframe: TimeFrame, data_type: DataType) -> None:
         ...
 
 
