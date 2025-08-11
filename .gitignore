@@ -1,5 +1,9 @@
+# Ignore agents, claude
+.claude/
+CLAUDE.md
+
 # Ignore data
-data
+fetch
 
 # Ignore DS_Store
 .DS_Store

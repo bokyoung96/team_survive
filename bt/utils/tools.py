@@ -6,16 +6,14 @@ from typing import Optional
 KST = pytz.timezone("Asia/Seoul")
 
 
-def convert_ts_to_dt(
-    ts: int, tz: Optional[pytz.timezone] = KST
-) -> Optional[datetime]:
+def convert_ts_to_dt(ts: int, tz: Optional[pytz.timezone] = KST) -> Optional[datetime]:
     if not ts:
         return None
     return datetime.fromtimestamp(ts / 1000, tz=pytz.utc).astimezone(tz)
 
 
 def parse_symbol(symbol_str: str):
-    from models import Symbol
+    from ..core.models import Symbol
     parts = symbol_str.split("/")
     if len(parts) != 2:
         raise ValueError(f"Invalid symbol format: {symbol_str}")
