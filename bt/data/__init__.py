@@ -1,4 +1,4 @@
-from fetchers import OHLCVFetcher
+from .fetchers import OHLCVFetcher
 
 __all__ = [
     "OHLCVFetcher",

@@ -1,10 +1,10 @@
 from __future__ import annotations
 from pathlib import Path
 
-from models import Exchange, DataType
-from protocols import DataFetcher, Repository
-from data.fetchers import OHLCVFetcher
-from storage.repository import RepositoryManager
+from core.models import Exchange, DataType
+from core.protocols import DataFetcher, Repository
+from data import OHLCVFetcher
+from storage import RepositoryManager
 
 
 class Factory:

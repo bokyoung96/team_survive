@@ -2,8 +2,8 @@ from __future__ import annotations
 import pandas as pd
 from typing import Optional
 
-from models import Symbol, TimeFrame, TimeRange, DataType
-from factory import Factory
+from core.models import Symbol, TimeFrame, TimeRange, DataType
+from core import Factory
 
 
 class DataLoader:

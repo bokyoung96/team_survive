@@ -1,4 +1,4 @@
-from indicators import (
+from .indicators import (
     IchimokuCloud,
     VolumeProfile,
     MovingAverage,
