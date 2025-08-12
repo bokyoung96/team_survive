@@ -3,8 +3,7 @@ import pandas as pd
 from pathlib import Path
 from typing import List, Dict
 
-from core.loader import DataLoader
-from core.factory import Factory
+from core import DataLoader, Factory
 from core.models import Symbol, TimeFrame, TimeRange, DataType, Exchange, MarketType
 from core.protocols import TechnicalIndicator
 from indicators import (

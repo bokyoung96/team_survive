@@ -1,16 +1,21 @@
 from __future__ import annotations
+import sys
+from pathlib import Path
 from datetime import datetime
 
+# NOTE: For interactive window mode / debugging purpose
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from analysis import Analyzer
-from core.models import TimeFrame, TimeRange
+from core.models import Symbol, TimeFrame, TimeRange
 from indicators import IchimokuCloud, MovingAverage, RSI
-from utils.tools import parse_symbol
+from utils.plots import GetPlots
 
 
 def main() -> dict[str, object]:
     analyzer = Analyzer(
-        symbol=parse_symbol("BTC/USDT:USDT"),
-        timeframe=TimeFrame.M5,
+        symbol=Symbol.from_string("BTC/USDT:USDT"),
+        timeframe=TimeFrame.D1,
         time_range=TimeRange(start=datetime(2025, 1, 1),
                              end=datetime(2025, 8, 3)),
     )
@@ -25,5 +30,12 @@ def main() -> dict[str, object]:
     return res
 
 
+def plotting(data: dict[str, object]) -> None:
+    plotter = GetPlots(title="Technical Analysis")
+    plotter.plot(data)
+    plotter.save_png("image.png")
+
+
 if __name__ == "__main__":
-    main()
+    res = main()
+    plotting(res)

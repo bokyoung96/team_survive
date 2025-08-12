@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any
 
-from utils.tools import KST
+from utils import KST
 
 
 @unique
@@ -61,6 +61,18 @@ class Symbol:
     base: str
     quote: str
     settle: Optional[str] = None
+
+    @classmethod
+    def from_string(cls, symbol_str: str) -> "Symbol":
+        parts = symbol_str.split("/")
+        if len(parts) != 2:
+            raise ValueError(f"Invalid symbol format: {symbol_str}")
+        base = parts[0]
+        if ":" in parts[1]:
+            quote, settle = parts[1].split(":", 1)
+        else:
+            quote, settle = parts[1], None
+        return cls(base=base, quote=quote, settle=settle)
 
     def to_string(self, market_type: "MarketType") -> str:
         pair = f"{self.base}/{self.quote}"

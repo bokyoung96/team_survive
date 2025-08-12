@@ -1,5 +1,5 @@
-from repository import RegistryOrchestrator
+from .repository import RepositoryManager
 
 __all__ = [
-    "RegistryOrchestrator",
+    "RepositoryManager",
 ]

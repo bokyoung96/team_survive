@@ -1,5 +1,5 @@
+import numpy as np
 import pandas as pd
-import pandas_ta as ta
 from typing import List, Dict
 
 from core.protocols import TechnicalIndicator
@@ -13,26 +13,40 @@ class IchimokuCloud:
         self._senkou = senkou
 
     def calculate(self, ohlcv: pd.DataFrame) -> pd.DataFrame:
-        ichimoku_df = ta.ichimoku(
-            high=ohlcv["high"],
-            low=ohlcv["low"],
-            close=ohlcv["close"],
-            tenkan=self._tenkan,
-            kijun=self._kijun,
-            senkou=self._senkou,
-        )[0]
-
-        col_map = {
-            f"ITS_{self._tenkan}": f"{self.name}_conversion_line",
-            f"IKS_{self._kijun}": f"{self.name}_base_line",
-            f"ISA_{self._tenkan}": f"{self.name}_leading_span_a",
-            f"ISB_{self._kijun}": f"{self.name}_leading_span_b",
-            f"ICS_{self._kijun}": f"{self.name}_lagging_span",
-        }
-
-        found_cols = {k: v for k, v in col_map.items()
-                      if k in ichimoku_df.columns}
-        return ichimoku_df[list(found_cols.keys())].rename(columns=found_cols)
+        high = ohlcv["high"]
+        low = ohlcv["low"]
+        close = ohlcv["close"]
+        
+        # NOTE: Conversion Line (Tenkan-sen)
+        tenkan_high = high.rolling(window=self._tenkan).max()
+        tenkan_low = low.rolling(window=self._tenkan).min()
+        conversion_line = (tenkan_high + tenkan_low) / 2
+        
+        # NOTE: Base Line (Kijun-sen)
+        kijun_high = high.rolling(window=self._kijun).max()
+        kijun_low = low.rolling(window=self._kijun).min()
+        base_line = (kijun_high + kijun_low) / 2
+        
+        # NOTE: Leading Span A (Senkou Span A)
+        leading_span_a = ((conversion_line + base_line) / 2).shift(self._kijun)
+        
+        # NOTE: Leading Span B (Senkou Span B)
+        senkou_high = high.rolling(window=self._senkou).max()
+        senkou_low = low.rolling(window=self._senkou).min()
+        leading_span_b = ((senkou_high + senkou_low) / 2).shift(self._kijun)
+        
+        # NOTE: Lagging Span (Chikou Span)
+        lagging_span = close.shift(-self._kijun)
+        
+        df = pd.DataFrame({
+            f"{self.name}_conversion_line": conversion_line,
+            f"{self.name}_base_line": base_line,
+            f"{self.name}_leading_span_a": leading_span_a,
+            f"{self.name}_leading_span_b": leading_span_b,
+            f"{self.name}_lagging_span": lagging_span,
+        })
+        
+        return df
 
 
 class VolumeProfile:
@@ -60,7 +74,7 @@ class MovingAverage:
         self._length = length
 
     def calculate(self, ohlcv: pd.DataFrame) -> pd.DataFrame:
-        ma = ta.sma(ohlcv["close"], length=self._length)
+        ma = ohlcv["close"].rolling(window=self._length).mean()
         return pd.DataFrame({self.name: ma})
 
 
@@ -70,7 +84,15 @@ class RSI:
         self._length = length
 
     def calculate(self, ohlcv: pd.DataFrame) -> pd.DataFrame:
-        rsi = ta.rsi(ohlcv["close"], length=self._length)
+        close = ohlcv["close"]
+        delta = close.diff()
+        
+        gain = (delta.where(delta > 0, 0)).rolling(window=self._length).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=self._length).mean()
+        
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+        
         return pd.DataFrame({self.name: rsi})
 
 
@@ -82,14 +104,28 @@ class MACD:
         self._signal = signal
 
     def calculate(self, ohlcv: pd.DataFrame) -> pd.DataFrame:
-        macd_df = ta.macd(ohlcv["close"], fast=self._fast,
-                          slow=self._slow, signal=self._signal)
-        column_names = {
-            f"MACD_{self._fast}_{self._slow}_{self._signal}": f"{self.name}",
-            f"MACDh_{self._fast}_{self._slow}_{self._signal}": f"{self.name}_hist",
-            f"MACDs_{self._fast}_{self._slow}_{self._signal}": f"{self.name}_signal",
-        }
-        return macd_df.rename(columns=column_names)
+        close = ohlcv["close"]
+        
+        # NOTE: Calculate EMAs
+        ema_fast = close.ewm(span=self._fast, adjust=False).mean()
+        ema_slow = close.ewm(span=self._slow, adjust=False).mean()
+        
+        # NOTE: MACD line
+        macd = ema_fast - ema_slow
+        
+        # NOTE: Signal line
+        signal = macd.ewm(span=self._signal, adjust=False).mean()
+        
+        # NOTE: MACD histogram
+        histogram = macd - signal
+        
+        df = pd.DataFrame({
+            f"{self.name}": macd,
+            f"{self.name}_signal": signal,
+            f"{self.name}_hist": histogram,
+        })
+        
+        return df
 
 
 class IndicatorProcessor:

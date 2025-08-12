@@ -1,4 +1,4 @@
-from models import (
+from .models import (
     DataType,
     TimeFrame,
     TimeRange,
@@ -6,9 +6,9 @@ from models import (
     Symbol,
     Exchange,
 )
-from protocols import DataFetcher, Repository, TechnicalIndicator
-from factory import Factory
-from loader import DataLoader
+from .protocols import DataFetcher, Repository, TechnicalIndicator
+from .factory import Factory
+from .loader import DataLoader
 
 __all__ = [
     "DataType",
