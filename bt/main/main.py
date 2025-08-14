@@ -9,7 +9,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from analysis import Analyzer
 from core.models import Symbol, TimeFrame, TimeRange
 from indicators import IchimokuCloud, MovingAverage, RSI
-from utils.plots import GetPlots
 
 
 def main() -> dict[str, object]:
@@ -30,12 +29,5 @@ def main() -> dict[str, object]:
     return res
 
 
-def plotting(data: dict[str, object]) -> None:
-    plotter = GetPlots(title="Technical Analysis")
-    plotter.plot(data)
-    plotter.save_png("image.png")
-
-
 if __name__ == "__main__":
     res = main()
-    plotting(res)
