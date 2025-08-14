@@ -185,7 +185,9 @@ def enable_file_logging()       # Enable file output
 ```python
 def run_simple_backtest():
     # Real data loading via DataLoader
-    factory = Factory()
+    exchange = Exchange(id="binance")
+    base_path = Path("../../fetch")
+    factory = Factory(exchange, base_path)
     loader = DataLoader(factory)
     data = loader.load(symbol, timeframe, time_range)
     
@@ -208,11 +210,14 @@ def run_simple_backtest():
 
 ```python
 from bt.backtest import BacktestEngine, GoldenCrossStrategy, TransactionCost
-from bt.core import Factory, DataLoader, Symbol, TimeFrame, TimeRange, DataType
+from bt.core import Factory, DataLoader, Symbol, TimeFrame, TimeRange, DataType, Exchange
 from decimal import Decimal
+from pathlib import Path
 
 # 1. Load real market data
-factory = Factory()
+exchange = Exchange(id="binance")
+base_path = Path("../../fetch")
+factory = Factory(exchange, base_path)
 loader = DataLoader(factory)
 symbol = Symbol.from_string("BTC/USDT")
 data = loader.load(symbol, TimeFrame.D1, DataType.OHLCV, TimeRange.days(365))
