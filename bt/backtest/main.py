@@ -13,8 +13,9 @@ from backtest.types import TransactionCost
 
 # Import data loader and models from core
 from ..core.loader import DataLoader
-from ..core.models import Symbol, TimeFrame, TimeRange, DataType
+from ..core.models import Symbol, TimeFrame, TimeRange, DataType, Exchange
 from ..core import Factory
+from pathlib import Path
 
 
 def generate_signals(strategy, data: pd.DataFrame) -> pd.DataFrame:
@@ -27,7 +28,9 @@ def run_simple_backtest():
     print("Loading data...")
     
     # Setup data loader
-    factory = Factory()
+    exchange = Exchange(id="binance")
+    base_path = Path(__file__).parent.parent.parent / "fetch"
+    factory = Factory(exchange, base_path)
     loader = DataLoader(factory)
     
     # Define symbol and timeframe

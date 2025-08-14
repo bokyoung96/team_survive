@@ -200,7 +200,7 @@ end_ts 도달 또는 데이터 없음까지 반복
 ```python
 # 기본 설정
 exchange = Exchange(id="binance", default_type=MarketType.SWAP)
-factory = Factory(exchange=exchange, base_path=Path("./data"))
+factory = Factory(exchange=exchange, base_path=Path("../../../fetch"))
 loader = DataLoader(factory=factory)
 
 # 심볼 및 시간 범위 설정

@@ -11,7 +11,7 @@ from core.models import Symbol, TimeFrame, TimeRange
 from indicators import IchimokuCloud, MovingAverage, RSI
 
 
-def main() -> dict[str, object]:
+def run() -> dict[str, object]:
     analyzer = Analyzer(
         symbol=Symbol.from_string("BTC/USDT:USDT"),
         timeframe=TimeFrame.D1,
@@ -30,4 +30,4 @@ def main() -> dict[str, object]:
 
 
 if __name__ == "__main__":
-    res = main()
+    res = run()
