@@ -22,7 +22,7 @@ class Analyzer:
         self._time_range = time_range
 
         exchange = Exchange(id="binance", default_type=MarketType.SWAP)
-        factory = Factory(exchange=exchange, base_path=Path("./fetch"))
+        factory = Factory(exchange=exchange, base_path=Path(__file__).parent.parent.parent / "fetch")
         self._loader = DataLoader(factory=factory)
         self._processor = IndicatorProcessor()
 
