@@ -1,4 +1,3 @@
-"""Backtesting module for trading strategies."""
 from backtest.engine import BacktestEngine
 from backtest.models import (
     Order,
@@ -7,11 +6,9 @@ from backtest.models import (
     BacktestResult
 )
 from backtest.types import ActionType, Signal, TransactionCost
-from backtest.strategies import Strategy
 from backtest.executors import OrderExecutor
 from backtest.performance import PerformanceAnalyzer
 
-# Backward compatibility
 SignalType = ActionType
 
 __all__ = [
@@ -21,10 +18,9 @@ __all__ = [
     'Portfolio',
     'BacktestResult',
     'TransactionCost',
-    'Strategy',
     'Signal',
     'ActionType',
-    'SignalType',  # For backward compatibility
+    'SignalType',
     'OrderExecutor',
     'PerformanceAnalyzer'
 ]
