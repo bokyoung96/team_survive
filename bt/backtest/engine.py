@@ -8,17 +8,12 @@ from backtest.models import (
     BacktestResult
 )
 from backtest.types import ActionType, TransactionCost
-from backtest.executors import OrderExecutor
+from backtest.executors import OrderCreator, OrderValidator, OrderExecutor
 from backtest.performance import PerformanceAnalyzer
 from backtest.logger import get_logger
 
 
 class BacktestEngine:
-    """
-    Efficient backtest engine focused on signal-based trading workflows.
-    Optimized for performance and clean integration with other components.
-    """
-    
     def __init__(
         self,
         transaction_cost: Optional[TransactionCost] = None,
@@ -26,57 +21,45 @@ class BacktestEngine:
     ):
         self.transaction_cost = transaction_cost or TransactionCost()
         self.analyzer = analyzer or PerformanceAnalyzer()
+        self.order_creator = OrderCreator()
+        self.order_validator = OrderValidator()
         self.order_executor = OrderExecutor(self.transaction_cost)
         self.logger = get_logger(__name__)
-    
+
     def run_backtest(
         self,
         signals: pd.DataFrame,
         ohlcv_data: pd.DataFrame,
         initial_capital: Decimal,
-        symbol: str,
-        progress_bar: bool = True
+        symbol: str
     ) -> BacktestResult:
-        """
-        Run backtest for a single symbol with signal-based trading.
-        
-        Args:
-            signals: DataFrame with trading signals
-            ohlcv_data: DataFrame with OHLCV price data
-            initial_capital: Starting capital for the backtest
-            symbol: Symbol to trade
-            progress_bar: Whether to show progress bar
-            
-        Returns:
-            BacktestResult containing all backtest metrics and data
-        """
-        self.logger.info(f"Starting backtest for {symbol} with ${initial_capital} initial capital")
-        self.logger.info(f"Processing {len(signals)} signals and {len(ohlcv_data)} price bars")
-        
+        self.logger.info(
+            f"Starting backtest for {symbol} with ${initial_capital} initial capital")
+        self.logger.info(
+            f"Processing {len(signals)} signals and {len(ohlcv_data)} price bars")
+
         portfolio = Portfolio(initial_capital=initial_capital)
-        
+
         equity_curve = []
         trades = []
         orders = []
-        
-        # Prepare data efficiently
+
         if 'timestamp' in signals.columns:
             signals_indexed = signals.set_index('timestamp')
         else:
             signals_indexed = signals
-        
+
         combined_data = ohlcv_data.join(signals_indexed, how='left')
-        
-        iterator = tqdm(range(len(combined_data))) if progress_bar else range(len(combined_data))
-        
+
+        iterator = tqdm(range(len(combined_data)), desc="Running backtest")
+
         for i in iterator:
             current_row = combined_data.iloc[i]
             timestamp = current_row.name
-            
-            # Update portfolio metrics efficiently
+
             current_prices = {symbol: Decimal(str(current_row["close"]))}
             metrics = portfolio.calculate_metrics(current_prices)
-            
+
             equity_curve.append({
                 "timestamp": timestamp,
                 "total_value": float(metrics["total_value"]),
@@ -86,18 +69,16 @@ class BacktestEngine:
                 "unrealized_pnl": float(metrics["unrealized_pnl"]),
                 "drawdown": 0.0
             })
-            
-            # Process signal if present
+
             if pd.notna(current_row.get('type')):
                 signal_type = ActionType(current_row['type'])
                 signal_strength = current_row.get('strength', 1.0)
                 signal_metadata = current_row.get('metadata', {})
-                
-                # Store position state BEFORE order execution
+
                 position_before = portfolio.get_position(symbol)
                 position_was_open = position_before is not None and position_before.is_open
-                
-                order = self.order_executor.create_order_from_signal_data(
+
+                order = self.order_creator.create_order(
                     signal_type=signal_type,
                     strength=signal_strength,
                     symbol=symbol,
@@ -105,23 +86,22 @@ class BacktestEngine:
                     portfolio=portfolio,
                     metadata=signal_metadata
                 )
-                
+
                 if order:
-                    if self.order_executor.validate_order(order, portfolio, current_row):
+                    if self.order_validator.validate_order(order, portfolio, current_row):
                         success, new_position = self.order_executor.execute_order(
                             order,
                             current_row,
                             portfolio,
                             timestamp
                         )
-                        
+
                         if success:
                             orders.append(order)
-                            
-                            # Check if position was closed (position existed before but not after)
+
                             position_after = portfolio.get_position(symbol)
                             position_is_open_after = position_after is not None and position_after.is_open
-                            
+
                             if position_was_open and not position_is_open_after and position_before:
                                 trades.append({
                                     "entry_time": position_before.entry_time,
@@ -134,19 +114,18 @@ class BacktestEngine:
                                     "commission": float(position_before.commission),
                                     "slippage": float(position_before.slippage)
                                 })
-        
-        # Handle final position if still open
+
         final_position = portfolio.get_position(symbol)
         if final_position and final_position.is_open:
             final_price = Decimal(str(combined_data.iloc[-1]["close"]))
             final_timestamp = combined_data.index[-1]
-            
+
             pnl = portfolio.close_position(
                 final_position,
                 final_price,
                 timestamp=final_timestamp
             )
-            
+
             trades.append({
                 "entry_time": final_position.entry_time,
                 "exit_time": final_timestamp,
@@ -158,26 +137,25 @@ class BacktestEngine:
                 "commission": float(final_position.commission),
                 "slippage": float(final_position.slippage)
             })
-        
-        # Process results efficiently
+
         equity_df = pd.DataFrame(equity_curve)
         if not equity_df.empty:
             equity_df.set_index("timestamp", inplace=True)
-            
+
             running_max = equity_df["total_value"].expanding().max()
-            equity_df["drawdown"] = (equity_df["total_value"] - running_max) / running_max
-        
+            equity_df["drawdown"] = (
+                equity_df["total_value"] - running_max) / running_max
+
         trades_df = pd.DataFrame(trades) if trades else pd.DataFrame()
         signals_df = signals.copy() if not signals.empty else pd.DataFrame()
-        
-        # Calculate performance metrics
+
         if not equity_df.empty and not trades_df.empty:
             performance_metrics = self.analyzer.analyze_performance(
                 equity_df,
                 trades_df,
                 float(initial_capital)
             )
-            
+
             metrics_dict = {
                 "total_return": performance_metrics.total_return,
                 "annualized_return": performance_metrics.annualized_return,
@@ -199,7 +177,7 @@ class BacktestEngine:
                 "profit_factor": 0.0,
                 "total_trades": 0
             }
-        
+
         result = BacktestResult(
             portfolio=portfolio,
             equity_curve=equity_df,
@@ -216,5 +194,4 @@ class BacktestEngine:
                 }
             }
         )
-        
         return result

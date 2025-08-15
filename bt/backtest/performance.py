@@ -99,7 +99,8 @@ class PerformanceAnalyzer:
         peak_idx = equity[:max_dd_idx].idxmax()
         
         recovery_idx = None
-        if max_dd_idx < len(equity) - 1:
+        max_dd_position = equity.index.get_loc(max_dd_idx)
+        if max_dd_position < len(equity) - 1:
             post_dd_equity = equity[max_dd_idx:]
             peak_value = equity[peak_idx]
             recovery_points = post_dd_equity[post_dd_equity >= peak_value]
