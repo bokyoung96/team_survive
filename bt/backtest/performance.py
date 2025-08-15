@@ -279,17 +279,9 @@ class PerformanceAnalyzer:
         )
     
     def generate_report(self, metrics: PerformanceMetrics) -> str:
-        """Generate performance report.
-        
-        Args:
-            metrics: Performance metrics
-            
-        Returns:
-            Formatted report string
-        """
         report = f"""
 ╔══════════════════════════════════════════════════════════╗
-║             BACKTESTING PERFORMANCE REPORT              ║
+║             BACKTESTING PERFORMANCE REPORT               ║
 ╚══════════════════════════════════════════════════════════╝
 
 ═══ RETURNS ═══════════════════════════════════════════════
