@@ -2,10 +2,9 @@ from decimal import Decimal
 import sys
 from pathlib import Path
 from datetime import datetime
-
+import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-
 
 from core.factory import Factory
 from core.models import Symbol, TimeFrame, TimeRange, Exchange, MarketType
@@ -16,19 +15,16 @@ from backtest.strats.dolpha1 import GoldenCrossStrategy
 from backtest.types import TransactionCost
 from backtest.engine import BacktestEngine
 from backtest.performance import PerformanceAnalyzer
-from backtest.plot import create_comprehensive_report_plots
+from backtest.plot import create_backtest_report
 
 
 def main():
-    print("Setting up backtest...")
     exchange = Exchange(id="binance", default_type=MarketType.SWAP)
     base_path = Path(__file__).parent.parent.parent / "fetch"
     factory = Factory(exchange, base_path)
     loader = DataLoader(factory)
-
+    
     symbol = Symbol.from_string("BTC/USDT:USDT")
-
-    print("Loading multi-timeframe data...")
     start_date = KST.localize(datetime(2022, 1, 1))
     end_date = KST.localize(datetime(2025, 8, 15))
     date_range = TimeRange(start_date, end_date)
@@ -38,64 +34,53 @@ def main():
             .add(symbol, TimeFrame.M3, date_range)
             .add(symbol, TimeFrame.M30, date_range)
             .add(symbol, TimeFrame.H1, date_range))
-
-    print(
-        f"Loaded {len(data['1d'])} daily bars for {symbol.base}/{symbol.quote}")
-
+    
     strategy = GoldenCrossStrategy(data=data)
-
-    signals = strategy.generate_all_signals()
-    print(f"Generated {len(signals)} signals")
-
+    signals = strategy.generate_all_signals(data["1d"])
+    
     if signals.empty:
-        print("No signals generated. Need more data for moving averages.")
-        return
-
+        signals = pd.DataFrame()
+    
     engine = BacktestEngine(
         transaction_cost=TransactionCost(
-            maker_fee=Decimal("0.001"),
-            taker_fee=Decimal("0.001")
+            maker_fee=Decimal("0.000"),
+            taker_fee=Decimal("0.000"),
+            slippage=Decimal("0.000")
         )
     )
-
+    
     result = engine.run_backtest(
         signals=signals,
         ohlcv_data=data["1d"],
         initial_capital=Decimal("10000"),
-        symbol=f"{symbol.base}{symbol.quote}"
+        symbol=f"{symbol.base}{symbol.quote}",
+        strategy=strategy
     )
-
-    print("\n=== Generating Performance Report ===")
+    
     analyzer = PerformanceAnalyzer()
     detailed_metrics = analyzer.analyze_performance(
         equity_curve=result.equity_curve,
         trades=result.trades,
         initial_capital=float(result.portfolio.initial_capital)
     )
-    report = analyzer.generate_report(detailed_metrics)
-    print(report)
+    
+    print(analyzer.generate_report(detailed_metrics))
+    
 
-    print("\n=== Generating Visualizations ===")
     try:
-        plots = create_comprehensive_report_plots(
+        create_backtest_report(
             result=result,
-            metrics=detailed_metrics,
-            price_data=data["1d"]
+            benchmark_data=data["1d"],
+            strategy_name="GoldenCrossStrategy (dolpha1)",
+            output_dir="bt_results",
+            show_plots=False
         )
-        print(f"Generated {len(plots)} visualization plots in backtest_results/")
+        print("\nPlots saved to bt_results/")
     except Exception as e:
-        print(f"Could not generate plots: {e}")
-        print("Install required packages: pip install matplotlib seaborn")
-
+        print(f"\nCould not generate plots: {e}")
+    
     return result
 
 
 if __name__ == "__main__":
-    try:
-        result = main()
-        if result:
-            print("\nBacktest completed successfully!")
-    except Exception as e:
-        print(f"\nError: {e}")
-        import traceback
-        traceback.print_exc()
+    result = main()

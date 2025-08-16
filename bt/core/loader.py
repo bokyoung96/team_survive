@@ -24,7 +24,7 @@ class DataLoader:
             if data is not None:
                 saved_data = self._set_dt_idx(data)
                 if self._is_data_sufficient(saved_data, time_range):
-                    return saved_data
+                    return self._apply_time_filter(saved_data, time_range)
 
         fetcher = self._factory.create_fetcher(data_type)
         fetched_data = fetcher.fetch(symbol, timeframe, time_range)
@@ -33,7 +33,8 @@ class DataLoader:
             return fetched_data
 
         self._repository.save(fetched_data, symbol, timeframe, data_type)
-        return self._set_dt_idx(fetched_data)
+        result = self._set_dt_idx(fetched_data)
+        return self._apply_time_filter(result, time_range)
 
     def _set_dt_idx(self, data: pd.DataFrame) -> pd.DataFrame:
         if "timestamp" not in data.columns:
@@ -51,3 +52,8 @@ class DataLoader:
             and data.index.min() <= time_range.start
             and data.index.max() >= time_range.end
         )
+
+    def _apply_time_filter(self, data: pd.DataFrame, time_range: Optional[TimeRange]) -> pd.DataFrame:
+        if time_range is None or data.empty:
+            return data
+        return data.loc[time_range.start:time_range.end]
