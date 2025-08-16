@@ -179,13 +179,23 @@ class Portfolio:
                 open_positions[symbol] = open_pos[0]
         return open_positions
     
+    def get_total_value(self, current_prices: Optional[Dict[str, Decimal]] = None) -> Decimal:
+        open_positions = self._get_open_positions_map()
+        
+        if current_prices:
+            return self.cash + sum(
+                pos.open_quantity * current_prices.get(symbol, pos.entry_price)
+                for symbol, pos in open_positions.items()
+            )
+        else:
+            return self.cash + sum(
+                pos.open_quantity * pos.entry_price
+                for pos in open_positions.values()
+            )
+    
     @property
     def total_value(self) -> Decimal:
-        open_positions = self._get_open_positions_map()
-        return self.cash + sum(
-            pos.open_quantity * pos.entry_price
-            for pos in open_positions.values()
-        )
+        return self.get_total_value()
     
     @property
     def open_positions(self) -> List[Position]:
@@ -210,9 +220,11 @@ class Portfolio:
         self.positions[position.symbol].append(position)
         
         if position.side == ActionType.BUY:
-            self.cash -= position.quantity * position.entry_price + position.commission + position.slippage
+            self.cash -= (position.quantity * position.entry_price + position.commission + position.slippage)
+        elif position.side == ActionType.SELL:
+            self.cash += (position.quantity * position.entry_price - position.commission - position.slippage)
         else:
-            self.cash += position.quantity * position.entry_price - position.commission - position.slippage
+            raise ValueError(f"Invalid position side: {position.side}")
         
     
     def close_position(
@@ -226,11 +238,14 @@ class Portfolio:
     ) -> Decimal:
         pnl = position.close(price, quantity, timestamp, commission, slippage)
         
-        close_qty = quantity or position.quantity
+        close_qty = quantity or position.open_quantity
+        
         if position.side == ActionType.BUY:
-            self.cash += close_qty * price - commission - slippage
+            self.cash += (close_qty * price - commission - slippage)
+        elif position.side == ActionType.SELL:
+            self.cash -= (close_qty * price + commission + slippage)
         else:
-            self.cash -= close_qty * price + commission + slippage
+            raise ValueError(f"Invalid position side: {position.side}")
             
         if not position.is_open:
             self.closed_positions.append(position)
@@ -246,7 +261,7 @@ class Portfolio:
             if symbol in current_prices:
                 pnl = pos.calculate_pnl(current_prices[symbol])
                 unrealized_pnl += pnl["unrealized_pnl"]
-                total_value += pos.open_quantity * current_prices[symbol]
+                total_value += pos.open_quantity * current_prices.get(symbol, pos.entry_price)
         
         realized_pnl = sum(pos.realized_pnl for pos in self.closed_positions)
         total_pnl = realized_pnl + unrealized_pnl

@@ -24,7 +24,7 @@ class OrderCreator:
         portfolio: Portfolio,
         metadata: dict = None
     ) -> Optional[Order]:
-        if signal_type in [ActionType.SELL, ActionType.EXIT]:
+        if signal_type in [ActionType.SELL, ActionType.EXIT, ActionType.CLOSE]:
             position = portfolio.get_position(symbol)
             if not position or not position.is_open:
                 return None
@@ -98,7 +98,7 @@ class OrderExecutor:
                         initial_size = Decimal(str(position_sizing["initial_size"]))
                         scale_factor = Decimal(str(position_sizing["scale_factor"]))
                         size_percent = initial_size * (scale_factor ** entry_count)
-                        position_value = portfolio.total_value * size_percent
+                        position_value = portfolio.get_total_value() * size_percent
                         order.quantity = position_value / fill_price
                     else:
                         return False, None
@@ -161,16 +161,27 @@ class OrderExecutor:
 
                 return True, None
             else:
-                new_position = self._create_position(
-                    order.symbol,
-                    order.side,
-                    fill_price,
-                    order.quantity,
-                    timestamp,
-                    costs
-                )
-                portfolio.add_position(new_position)
-                return True, new_position
+                open_qty = existing_position.open_quantity
+                total_cost = existing_position.entry_price * open_qty
+                new_cost = fill_price * order.quantity
+                total_quantity = open_qty + order.quantity
+                
+                existing_position.entry_price = (total_cost + new_cost) / total_quantity
+                existing_position.quantity = existing_position.closed_quantity + total_quantity
+                existing_position.commission += costs["fee"]
+                existing_position.slippage += costs["slippage"]
+                
+                if order.side == ActionType.BUY:
+                    total_cost = order.quantity * fill_price + costs["fee"] + costs["slippage"]
+                    if portfolio.cash < total_cost:
+                        raise ValueError(f"Insufficient cash: {portfolio.cash} < {total_cost}")
+                    portfolio.cash -= total_cost
+                elif order.side == ActionType.SELL:
+                    portfolio.cash += (order.quantity * fill_price - costs["fee"] - costs["slippage"])
+                else:
+                    raise ValueError(f"Invalid order side: {order.side}")
+                    
+                return True, existing_position
         else:
             position = self._create_position(
                 order.symbol,

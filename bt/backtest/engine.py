@@ -31,7 +31,9 @@ class BacktestEngine:
         signals: pd.DataFrame,
         ohlcv_data: pd.DataFrame,
         initial_capital: Decimal,
-        symbol: str
+        symbol: str,
+        strategy=None,
+        intraday_timeframe: str = "3m"
     ) -> BacktestResult:
         self.logger.info(
             f"Starting backtest for {symbol} with ${initial_capital} initial capital")
@@ -49,7 +51,16 @@ class BacktestEngine:
         else:
             signals_indexed = signals
 
-        combined_data = ohlcv_data.join(signals_indexed, how='left')
+        if strategy and hasattr(strategy, 'data') and strategy.data:
+            if intraday_timeframe in strategy.data:
+                intraday_data = strategy.data[intraday_timeframe]
+                combined_data = intraday_data.join(signals_indexed, how='left')
+                self.logger.info(f"Using {intraday_timeframe} data for intraday backtesting: {len(combined_data)} bars")
+            else:
+                combined_data = ohlcv_data.join(signals_indexed, how='left')
+                self.logger.warning(f"Intraday timeframe {intraday_timeframe} not available, using daily data")
+        else:
+            combined_data = ohlcv_data.join(signals_indexed, how='left')
 
         iterator = tqdm(range(len(combined_data)), desc="Running backtest")
 
@@ -70,10 +81,38 @@ class BacktestEngine:
                 "drawdown": 0.0
             })
 
-            if pd.notna(current_row.get('type')):
-                signal_type = ActionType(current_row['type'])
-                signal_strength = current_row.get('strength', 1.0)
-                signal_metadata = current_row.get('metadata', {})
+            dynamic_signal = None
+            if strategy:
+                if hasattr(strategy, 'data') and strategy.data and intraday_timeframe in strategy.data:
+                    current_timestamp = timestamp
+                    daily_data_up_to_now = ohlcv_data[ohlcv_data.index <= current_timestamp]
+                    if daily_data_up_to_now.empty:
+                        daily_data_up_to_now = ohlcv_data.iloc[:1]
+                    current_position = portfolio.get_position(symbol)
+                    dynamic_signal = strategy.generate_signal(daily_data_up_to_now, current_position)
+                else:
+                    current_data = ohlcv_data.iloc[:i+1]
+                    current_position = portfolio.get_position(symbol)
+                    dynamic_signal = strategy.generate_signal(current_data, current_position)
+            
+            signal_to_process = None
+            if dynamic_signal:
+                signal_to_process = {
+                    'type': dynamic_signal.type.value,
+                    'strength': dynamic_signal.strength,
+                    'metadata': dynamic_signal.metadata
+                }
+            elif pd.notna(current_row.get('type')):
+                signal_to_process = {
+                    'type': current_row['type'],
+                    'strength': current_row.get('strength', 1.0),
+                    'metadata': current_row.get('metadata', {})
+                }
+                
+            if signal_to_process:
+                signal_type = ActionType(signal_to_process['type'])
+                signal_strength = signal_to_process['strength']
+                signal_metadata = signal_to_process['metadata']
 
                 position_before = portfolio.get_position(symbol)
                 position_was_open = position_before is not None and position_before.is_open
@@ -89,7 +128,7 @@ class BacktestEngine:
 
                 if order:
                     if self.order_validator.validate_order(order, portfolio, current_row):
-                        success, new_position = self.order_executor.execute_order(
+                        success, _ = self.order_executor.execute_order(
                             order,
                             current_row,
                             portfolio,

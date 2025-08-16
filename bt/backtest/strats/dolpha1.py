@@ -1,12 +1,11 @@
 from decimal import Decimal
-from typing import Optional, Dict, List, Any, Tuple
+from typing import Optional, Dict, List, Any
 import pandas as pd
 
 from backtest.types import ActionType, Signal
 from backtest.timeframe import MultiTimeframeData
 from backtest.logger import get_logger
 from backtest.strategies import Strategy
-from backtest.models import Portfolio
 from indicators.indicators import MovingAverage
 
 
@@ -24,10 +23,8 @@ class GoldenCrossStrategy(Strategy):
 
         # NOTE: Default parameters
         default_ma_periods = {
-            "daily": [3, 7, 50],
-            # "daily": [112, 224, 448],
-            "3min": [60],
-            # "3min": [360],
+            "daily": [112, 224, 448],
+            "3min": [360],
             "30min": [60],
             "60min": [60]
         }
@@ -63,46 +60,6 @@ class GoldenCrossStrategy(Strategy):
             del self._daily_ma_indicators
         if hasattr(self, '_mtf_ma_indicators'):
             del self._mtf_ma_indicators
-        if hasattr(self, '_ma_results'):
-            del self._ma_results
-
-    def _calculate_ma_stored(self, data: pd.DataFrame, period: int, key: str) -> pd.Series:
-        if len(data) < period:
-            return pd.Series(index=data.index, dtype=float)
-
-        if not hasattr(self, '_ma_results'):
-            self._ma_results = {}
-            
-        if key not in self._ma_results:
-            self._ma_results[key] = MovingAverage(name=f"ma_{period}", length=period)
-            
-        ma_df = self._ma_results[key].calculate(data)
-        return ma_df[f"ma_{period}"]
-
-    def generate_all_signals(self) -> pd.DataFrame:
-        if not self.data or "1d" not in self.data:
-            return pd.DataFrame()
-        
-        daily_data = self.data["1d"]
-        data_with_indicators = self.calculate_indicators(daily_data)
-        
-        signals = []
-        for i in range(len(data_with_indicators)):
-            if i < 50:
-                continue
-                
-            current_data = data_with_indicators.iloc[:i+1]
-            signal = self.generate_signal(current_data)
-            
-            if signal:
-                signals.append({
-                    'timestamp': current_data.index[-1],
-                    'type': signal.type.value,
-                    'strength': signal.strength,
-                    'metadata': signal.metadata
-                })
-        
-        return pd.DataFrame(signals).set_index('timestamp') if signals else pd.DataFrame()
     
     def calculate_indicators(self, data: pd.DataFrame) -> pd.DataFrame:
         df = data.copy()
@@ -134,11 +91,11 @@ class GoldenCrossStrategy(Strategy):
 
         return ma_112 > ma_224 > ma_448
 
-    def check_mtf_touch(self, current_price: float) -> bool:
+    def check_mtf_touch(self, current_price: Decimal) -> bool:
         if not self.data:
             return False
 
-        tolerance = 0.001
+        tolerance = Decimal("0.01")  # 1% tolerance for mtf touch
 
         if not hasattr(self, '_mtf_ma_indicators'):
             self._mtf_ma_indicators = {}
@@ -166,7 +123,7 @@ class GoldenCrossStrategy(Strategy):
             ma_value = ma_series.iloc[-1]
 
             if not pd.isna(ma_value) and ma_value > 0:
-                diff_pct = abs(current_price - ma_value) / ma_value
+                diff_pct = abs(Decimal(str(current_price)) - Decimal(str(ma_value))) / Decimal(str(ma_value))
                 if diff_pct <= tolerance:
                     return True
 
@@ -237,8 +194,12 @@ class GoldenCrossStrategy(Strategy):
                 )
 
         # NOTE: Entry logic: Golden cross (daily) + Multi-timeframe MA touch
+        max_entries = self.parameters["position_sizing"]["max_entries"]
+        if self.entry_count >= max_entries:
+            return None
+            
         golden_cross = self.check_golden_cross(data)
-        multi_tf_touch = self.check_mtf_touch(float(current_price))
+        multi_tf_touch = self.check_mtf_touch(current_price)
 
         if golden_cross and multi_tf_touch:
             self._logger.info(
@@ -248,7 +209,7 @@ class GoldenCrossStrategy(Strategy):
             self.entry_prices.append(current_price)
             
             self._logger.info(
-                f"BUY signal generated: ${current_price}, entry #{self.entry_count}")
+                f"BUY signal generated: ${current_price}, entry #{self.entry_count}/{max_entries}")
             return Signal(
                 type=ActionType.BUY,
                 strength=0.8,
@@ -257,7 +218,7 @@ class GoldenCrossStrategy(Strategy):
                     "entry_count": self.entry_count,
                     "golden_cross": True,
                     "multi_timeframe_touch": True,
-                    "position_sizing": self.parameters["position_sizing"]  # Pass sizing params for execution layer
+                    "position_sizing": self.parameters["position_sizing"]
                 }
             )
         elif golden_cross:
@@ -268,23 +229,3 @@ class GoldenCrossStrategy(Strategy):
                 "Multi-timeframe touch detected but no golden cross")
 
         return None
-
-    def get_strategy_conditions(self) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-        # NOTE: Golden cross conditions (daily MA112 > MA224 > MA448)
-        golden_cross_conditions = []
-        ma_periods = self.parameters["ma_periods"]["daily"]
-        for i, period in enumerate(ma_periods):
-            golden_cross_conditions.append({
-                "type": "golden_cross",
-                "timeframe": "daily",
-                "ma_period": period,
-                "order": i
-            })
-
-        # NOTE: Multi-timeframe touch conditions
-        touch_conditions = [
-            {"timeframe": "3min", "ma_period": 360, "tolerance": 0.001},
-            {"timeframe": "30min", "ma_period": 60, "tolerance": 0.001},
-            {"timeframe": "60min", "ma_period": 60, "tolerance": 0.001}
-        ]
-        return golden_cross_conditions, touch_conditions

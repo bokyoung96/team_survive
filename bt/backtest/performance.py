@@ -55,10 +55,15 @@ class PerformanceAnalyzer:
         
         excess_returns = returns - (self.risk_free_rate / periods_per_year)
         
-        if excess_returns.std() == 0:
+        std_returns = excess_returns.std()
+        if std_returns == 0 or np.isnan(std_returns):
             return 0.0
         
-        return np.sqrt(periods_per_year) * (excess_returns.mean() / excess_returns.std())
+        mean_returns = excess_returns.mean()
+        if np.isnan(mean_returns):
+            return 0.0
+            
+        return np.sqrt(periods_per_year) * (mean_returns / std_returns)
     
     def calculate_sortino_ratio(
         self,
@@ -76,10 +81,14 @@ class PerformanceAnalyzer:
         
         downside_std = np.sqrt(np.mean(downside_returns ** 2))
         
-        if downside_std == 0:
-            return 0.0
+        if downside_std == 0 or np.isnan(downside_std):
+            return float('inf') if excess_returns.mean() > 0 else 0.0
         
-        return np.sqrt(periods_per_year) * (excess_returns.mean() / downside_std)
+        mean_returns = excess_returns.mean()
+        if np.isnan(mean_returns):
+            return 0.0
+            
+        return np.sqrt(periods_per_year) * (mean_returns / downside_std)
     
     def calculate_max_drawdown(self, equity_curve: pd.DataFrame) -> Dict[str, Any]:
         if "total_value" in equity_curve.columns:
@@ -91,7 +100,11 @@ class PerformanceAnalyzer:
         
         running_max = equity.expanding().max()
         
-        drawdown = (equity - running_max) / running_max
+        # Avoid division by zero
+        drawdown = pd.Series(index=equity.index, dtype=float)
+        mask = running_max != 0
+        drawdown[mask] = (equity[mask] - running_max[mask]) / running_max[mask]
+        drawdown[~mask] = 0.0
         
         max_dd = drawdown.min()
         max_dd_idx = drawdown.idxmin()
@@ -152,7 +165,12 @@ class PerformanceAnalyzer:
         total_wins = winning_trades.sum() if num_winners > 0 else 0
         total_losses = abs(losing_trades.sum()) if num_losers > 0 else 0
         
-        profit_factor = total_wins / total_losses if total_losses > 0 else float('inf') if total_wins > 0 else 0.0
+        if total_losses > 0:
+            profit_factor = total_wins / total_losses
+        elif total_wins > 0:
+            profit_factor = float('inf')
+        else:
+            profit_factor = 0.0
         
         avg_win = winning_trades.mean() if num_winners > 0 else 0.0
         avg_loss = losing_trades.mean() if num_losers > 0 else 0.0
@@ -189,7 +207,10 @@ class PerformanceAnalyzer:
         periods_with_position = (equity_curve[positions_column] > 0).sum()
         total_periods = len(equity_curve)
         
-        return periods_with_position / total_periods if total_periods > 0 else 0.0
+        if total_periods > 0:
+            return periods_with_position / total_periods
+        else:
+            return 0.0
     
     
     def calculate_advanced_risk_metrics(self, returns: pd.Series) -> Dict[str, float]:
@@ -205,8 +226,15 @@ class PerformanceAnalyzer:
         
         benchmark_return = 0.0
         excess_returns = returns_clean - benchmark_return
-        information_ratio = (excess_returns.mean() / excess_returns.std() 
-                           if excess_returns.std() > 0 else 0.0)
+        std_excess = excess_returns.std()
+        if std_excess > 0 and not np.isnan(std_excess):
+            mean_excess = excess_returns.mean()
+            if not np.isnan(mean_excess):
+                information_ratio = mean_excess / std_excess
+            else:
+                information_ratio = 0.0
+        else:
+            information_ratio = 0.0
         
         return {
             'skewness': skewness,
@@ -231,12 +259,18 @@ class PerformanceAnalyzer:
         else:
             final_equity = initial_capital
         
-        total_return = (final_equity - initial_capital) / initial_capital
+        if initial_capital > 0:
+            total_return = (final_equity - initial_capital) / initial_capital
+        else:
+            total_return = 0.0
         
         num_periods = len(equity_curve)
         if num_periods > 0:
             years = num_periods / periods_per_year
-            annualized_return = (1 + total_return) ** (1 / years) - 1 if years > 0 else total_return
+            if years > 0 and total_return > -1:
+                annualized_return = (1 + total_return) ** (1 / years) - 1
+            else:
+                annualized_return = total_return
         else:
             annualized_return = 0.0
         

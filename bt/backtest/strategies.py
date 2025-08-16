@@ -17,19 +17,19 @@ class Strategy(ABC):
         pass
 
     def generate_all_signals(self, data: pd.DataFrame) -> pd.DataFrame:
-        data_with_indicators = self.calculate_indicators(data)
+        datas = self.calculate_indicators(data)
 
         signals = []
-        for i in range(len(data_with_indicators)):
+        for i in range(len(datas)):
             if i < 50:
                 continue
 
-            current_data = data_with_indicators.iloc[:i+1]
-            signal = self.generate_signal(current_data)
+            cur_data = datas.iloc[:i+1]
+            signal = self.generate_signal(cur_data)
 
             if signal:
                 signals.append({
-                    'timestamp': current_data.index[-1],
+                    'timestamp': cur_data.index[-1],
                     'type': signal.type.value,
                     'strength': signal.strength,
                     'metadata': signal.metadata
