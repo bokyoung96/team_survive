@@ -18,15 +18,15 @@ class Strategy(ABC):
 
     def generate_all_signals(self, data: pd.DataFrame) -> pd.DataFrame:
         datas = self.calculate_indicators(data)
-
+        
         signals = []
         for i in range(len(datas)):
             if i < 50:
                 continue
-
+            
             cur_data = datas.iloc[:i+1]
             signal = self.generate_signal(cur_data)
-
+            
             if signal:
                 signals.append({
                     'timestamp': cur_data.index[-1],
@@ -34,6 +34,7 @@ class Strategy(ABC):
                     'strength': signal.strength,
                     'metadata': signal.metadata
                 })
+        
         return pd.DataFrame(signals).set_index('timestamp') if signals else pd.DataFrame()
 
     @abstractmethod
