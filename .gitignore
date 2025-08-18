@@ -1,3 +1,6 @@
+# Ignore results
+bt_results/
+
 # Ignore agents, claude
 .claude/
 CLAUDE.md

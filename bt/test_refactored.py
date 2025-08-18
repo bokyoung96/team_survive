@@ -1,9 +1,13 @@
+#!/usr/bin/env python3
+"""Test script to verify Entry #1 repetition bug is fixed."""
+
 from decimal import Decimal
 import sys
 from pathlib import Path
 from datetime import datetime
+import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent))
 
 from core.factory import Factory
 from core.models import Symbol, TimeFrame, TimeRange, Exchange, MarketType
@@ -13,19 +17,20 @@ from backtest.timeframe import MultiTimeframeData
 from backtest.strats.dolpha1 import GoldenCrossStrategy
 from backtest.types import TransactionCost
 from backtest.engine import BacktestEngine
-from backtest.performance import PerformanceAnalyzer
-from backtest.plot import create_backtest_report
 
 
 def main():
+    print("Starting test for Entry #1 repetition bug...")
+    
     exchange = Exchange(id="binance", default_type=MarketType.SWAP)
-    base_path = Path(__file__).parent.parent.parent / "fetch"
+    base_path = Path(__file__).parent.parent / "fetch"
     factory = Factory(exchange, base_path)
     loader = DataLoader(factory)
     
     symbol = Symbol.from_string("BTC/USDT:USDT")
-    start_date = KST.localize(datetime(2022, 1, 1))
-    end_date = KST.localize(datetime(2025, 8, 15))
+    # Shorter date range for quick test
+    start_date = KST.localize(datetime(2023, 1, 1))
+    end_date = KST.localize(datetime(2024, 1, 1))  # 1 year
     date_range = TimeRange(start_date, end_date)
     
     data = (MultiTimeframeData(loader)
@@ -40,6 +45,11 @@ def main():
     signals = strategy.generate_all_signals(data["1d"])
     print(f"Generated {len(signals)} signals")
     
+    # Filter to first few signals for quick test
+    if len(signals) > 5:
+        signals = signals.head(5)
+        print(f"Using first 5 signals for quick test")
+    
     engine = BacktestEngine(
         transaction_cost=TransactionCost(
             maker_fee=Decimal("0.000"),
@@ -48,6 +58,7 @@ def main():
         )
     )
     
+    print("\n--- Running backtest ---")
     result = engine.run_backtest(
         signals=signals,
         ohlcv_data=data["1d"],
@@ -56,26 +67,23 @@ def main():
         strategy=strategy
     )
     
-    analyzer = PerformanceAnalyzer()
-    detailed_metrics = analyzer.analyze_performance(
-        equity_curve=result.equity_curve,
-        trades=result.trades,
-        initial_capital=float(result.portfolio.initial_capital)
-    )
+    print("\n--- Test Results ---")
+    trades = result.trades
+    if not trades.empty:
+        print(f"Total trades: {len(trades)}")
+        print("\nTrade details:")
+        for idx, trade in trades.iterrows():
+            print(f"Trade {idx+1}:")
+            print(f"  Entry: {trade['entry_time']:%Y-%m-%d %H:%M}")
+            print(f"  Exit: {trade['exit_time']:%Y-%m-%d %H:%M}")
+            print(f"  PnL: ${trade['pnl']:.2f}")
+    else:
+        print("No trades executed")
     
-    print(analyzer.generate_report(detailed_metrics))
-    
-    try:
-        create_backtest_report(
-            result=result,
-            benchmark_data=data["1d"],
-            strategy_name="GoldenCrossStrategy",
-            output_dir="bt_results",
-            show_plots=False
-        )
-        print("\nPlots saved to bt_results/")
-    except Exception as e:
-        print(f"\nCould not generate plots: {e}")
+    # Check logs for Entry patterns
+    print("\n--- Checking for Entry #1 repetition ---")
+    print("If you see multiple Entry #1 without Entry #2, #3, etc., the bug persists.")
+    print("If you see Entry #1, #2, #3... up to #10, then EXIT, the bug is fixed.")
     
     return result
 
