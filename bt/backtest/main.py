@@ -36,10 +36,6 @@ def main():
     
     strategy = GoldenCrossStrategy(data=data)
     
-    print(f"Generating signals...")
-    signals = strategy.generate_all_signals(data["1d"])
-    print(f"Generated {len(signals)} signals")
-    
     engine = BacktestEngine(
         transaction_cost=TransactionCost(
             maker_fee=Decimal("0.000"),
@@ -48,12 +44,12 @@ def main():
         )
     )
     
+    print(f"Running real-time backtest...")
     result = engine.run_backtest(
-        signals=signals,
+        strategy=strategy,
         ohlcv_data=data["1d"],
-        initial_capital=Decimal("10000"),
-        symbol=f"{symbol.base}{symbol.quote}",
-        strategy=strategy
+        initial_capital=Decimal("100000000"),
+        symbol=f"{symbol.base}{symbol.quote}"
     )
     
     analyzer = PerformanceAnalyzer()

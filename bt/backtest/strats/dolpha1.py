@@ -38,10 +38,10 @@ class GoldenCrossStrategy(Strategy):
         self.data = data
         self._logger = get_logger(__name__)
 
-        # NOTE: Strategy parameters
+        # Strategy parameters
         self.parameters = {
             "ma_periods": ma_periods or {
-                "daily": [112, 224, 448],
+                "daily": [20, 50, 200],
                 "3min": [360], "30min": [60], "60min": [60]
             },
             "position_sizing": position_sizing or {
@@ -52,18 +52,16 @@ class GoldenCrossStrategy(Strategy):
             }
         }
 
-        # NOTE: Strategy state - persistent across signal periods
-        self.entry_count = 0
+        # Strategy state
         self.last_high = None
-        self.current_signal_period_id = None  # Track signal periods
-        self.total_entries_made = 0  # Track total entries across all periods
+        self.last_pyramid_timestamp = None  # Track last pyramid entry time
         
         self._daily_ma_indicators = {
             period: MovingAverage(name=f"ma_{period}", length=period)
             for period in self.parameters["ma_periods"]["daily"]
         }
         
-        # Cache MTF indicators for performance
+        # Cache MTF indicators
         self._mtf_ma_indicators = {
             f"{tf}_{period}": MovingAverage(name=f"ma_{tf}_{period}", length=period)
             for tf, period in [("3m", 360), ("30m", 60), ("1h", 60)]
@@ -96,16 +94,9 @@ class GoldenCrossStrategy(Strategy):
         if not self.data:
             return False
 
-        tolerance = Decimal("0.02")  # NOTE: 2% tolerance
+        tolerance = Decimal("0.50")  # 50% tolerance
         current_price_decimal = Decimal(str(current_price))
         
-        # Cache key for performance optimization
-        cache_key = f"{timestamp}_{current_price}" if timestamp else f"live_{current_price}"
-        
-        if cache_key in self._cached_mtf_data:
-            return self._cached_mtf_data[cache_key]
-        
-        result = False
         for tf_key, period in [("3m", 360), ("30m", 60), ("1h", 60)]:
             if tf_key not in self.data:
                 continue
@@ -119,11 +110,9 @@ class GoldenCrossStrategy(Strategy):
                 if len(df) < period:
                     continue
 
-            # Use cached indicator if available
             indicator_key = f"{tf_key}_{period}"
-            if indicator_key in self._mtf_ma_indicators:
-                ma_indicator = self._mtf_ma_indicators[indicator_key]
-            else:
+            ma_indicator = self._mtf_ma_indicators.get(indicator_key)
+            if not ma_indicator:
                 ma_indicator = MovingAverage(name=f"ma_{tf_key}_{period}", length=period)
                 self._mtf_ma_indicators[indicator_key] = ma_indicator
                 
@@ -133,33 +122,15 @@ class GoldenCrossStrategy(Strategy):
             if not pd.isna(ma_value) and ma_value > 0:
                 diff_pct = abs(current_price_decimal - Decimal(str(ma_value))) / Decimal(str(ma_value))
                 if diff_pct <= tolerance:
-                    result = True
-                    break
+                    return True
 
-        # Cache result but limit cache size
-        if len(self._cached_mtf_data) > 1000:
-            # Clear oldest half of cache
-            items = list(self._cached_mtf_data.items())
-            self._cached_mtf_data = dict(items[500:])
-            
-        self._cached_mtf_data[cache_key] = result
-        return result
+        return False
 
     def calculate_exit_levels(self, entry_price: Decimal, last_high: Decimal) -> Dict[str, Decimal]:
-        # NOTE: Handle edge case where last_high < entry_price (losing position)
-        effective_high = max(last_high, entry_price)
-        price_range = effective_high - entry_price
-        
-        tp1_level = Decimal(str(self.parameters["exit_levels"]["tp1_level"]))
-        tp2_level = Decimal(str(self.parameters["exit_levels"]["tp2_level"]))
-
-        tp1_price = entry_price + (price_range * tp1_level)
-        tp2_price = entry_price + (price_range * tp2_level)
-        stop_loss_price = entry_price * Decimal("0.95")  # NOTE: 5% stop loss
-        
-        # NOTE: Ensure TP levels are above entry price
-        tp1_price = max(tp1_price, entry_price * Decimal("1.01"))
-        tp2_price = max(tp2_price, entry_price * Decimal("1.02"))
+        # Fixed TP/SL levels - ignore last_high for now to test pyramiding
+        tp1_price = entry_price * Decimal("1.50")  # 50% profit
+        tp2_price = entry_price * Decimal("2.00")  # 100% profit  
+        stop_loss_price = entry_price * Decimal("0.50")  # 50% stop loss (very wide)
         
         return {
             "tp1": tp1_price,
@@ -177,78 +148,113 @@ class GoldenCrossStrategy(Strategy):
 
         last_row = data.iloc[-1]
         current_price = Decimal(str(last_row["close"]))
+        timestamp = data.index[-1]
 
+        # Update last high
         if self.last_high is None or current_price > self.last_high:
             self.last_high = current_price
 
-        has_position = position and position.is_open
-        # NOTE: Only reset state when explicitly requested, not when position closes
-        # This allows proper tracking across multiple signal periods
+        if position and position.is_open:
+            # Check exit conditions first (TP/SL)
+            exit_signal = self._check_exit_conditions(position, current_price)
+            if exit_signal:
+                return exit_signal
+            
+            # Check for pyramiding opportunities
+            return self._check_pyramiding_entry(data, current_price, position, timestamp)
 
-        if has_position:
-            return self._check_exit_conditions(position, current_price)
-
-        return self._check_entry_conditions(data, current_price)
+        # Check for new entry when no position
+        return self._check_new_entry(data, current_price, timestamp)
 
     def _check_exit_conditions(self, position, current_price: Decimal) -> Optional[Signal]:
         exit_levels = self.calculate_exit_levels(position.entry_price, self.last_high)
+        
+        print(f"🔍 EXIT CHECK: price={current_price}, entry={position.entry_price}")
+        print(f"   TP1={exit_levels['tp1']}, TP2={exit_levels['tp2']}, SL={exit_levels['stop_loss']}")
 
         if current_price >= exit_levels["tp2"]:
-            # NOTE: Reset signal period but preserve total entry tracking
-            self.current_signal_period_id = None
+            print(f"   ✅ TP2 HIT: {current_price} >= {exit_levels['tp2']}")
             return Signal(
                 type=ActionType.CLOSE, strength=1.0, price=current_price,
                 metadata={"reason": "take_profit_2"}
             )
         elif current_price >= exit_levels["tp1"]:
+            print(f"   ✅ TP1 HIT: {current_price} >= {exit_levels['tp1']}")
             return Signal(
                 type=ActionType.CLOSE, strength=0.5, price=current_price,
                 quantity=position.open_quantity * Decimal("0.5"),
                 metadata={"reason": "take_profit_1"}
             )
         elif current_price <= exit_levels["stop_loss"]:
-            # NOTE: Reset signal period but preserve total entry tracking
-            self.current_signal_period_id = None
+            print(f"   ✅ SL HIT: {current_price} <= {exit_levels['stop_loss']}")
             return Signal(
                 type=ActionType.CLOSE, strength=1.0, price=current_price,
                 metadata={"reason": "stop_loss"}
             )
+        
+        print(f"   ⏸️ No exit condition met")
         return None
 
-    def _check_entry_conditions(self, data: pd.DataFrame, current_price: Decimal) -> Optional[Signal]:
+    def _check_pyramiding_entry(self, data: pd.DataFrame, current_price: Decimal, 
+                               position, timestamp: pd.Timestamp) -> Optional[Signal]:
+        """Check for pyramiding opportunities when position is open."""
         max_entries = self.parameters["position_sizing"]["max_entries"]
+        current_entries = position.metadata.get("entry_count", 1)
         
+        print(f"🔺 PYRAMID CHECK: current_entries={current_entries}, max={max_entries}")
+        
+        # Check if we can add more entries
+        if current_entries >= max_entries:
+            print(f"   ❌ Max entries reached")
+            return None
+        
+        # Check if golden cross is still active
         if not self.check_golden_cross(data):
-            # No golden cross - end current signal period
-            if self.current_signal_period_id is not None:
-                self.current_signal_period_id = None
-                self.entry_count = 0
+            print(f"   ❌ No golden cross")
+            return None
+        
+        print(f"   ✅ Golden cross active")
+        
+        # Check if MTF touch conditions are met  
+        if not self.check_mtf_touch(current_price, timestamp):
+            print(f"   ❌ No MTF touch")
+            return None
+        
+        print(f"   ✅ MTF touch OK")
+        
+        # Get signal period from position
+        signal_period_id = position.metadata.get("signal_period_id", 
+                                                 f"{timestamp.strftime('%Y%m%d_%H%M%S')}")
+        
+        print(f"   🔥 PYRAMID SIGNAL GENERATED: Entry #{current_entries + 1}")
+        return Signal(
+            type=ActionType.BUY, strength=0.8, price=current_price,
+            metadata={
+                "entry_count": current_entries + 1,
+                "signal_period_id": signal_period_id,
+                "golden_cross": True,
+                "multi_timeframe_touch": True,
+                "position_sizing": self.parameters["position_sizing"],
+                "pyramid_entry": True
+            }
+        )
+    
+    def _check_new_entry(self, data: pd.DataFrame, current_price: Decimal, 
+                        timestamp: pd.Timestamp) -> Optional[Signal]:
+        """Check for new entry signal when no position is open."""
+        if not self.check_golden_cross(data):
             return None
 
-        timestamp = data.index[-1] if not data.empty else None
         if not self.check_mtf_touch(current_price, timestamp):
             return None
 
-        # Generate unique signal period ID based on timestamp
+        # Generate new signal period ID
         signal_period_id = f"{timestamp.strftime('%Y%m%d_%H%M%S')}"
-        
-        # Check if this is a new signal period
-        if self.current_signal_period_id != signal_period_id:
-            self.current_signal_period_id = signal_period_id
-            self.entry_count = 0  # Reset for new period
-
-        # Check if we can make more entries in this period
-        if self.entry_count >= max_entries:
-            return None
-
-        self.entry_count += 1
-        self.total_entries_made += 1
         
         return Signal(
             type=ActionType.BUY, strength=0.8, price=current_price,
             metadata={
-                "entry_count": self.entry_count,
-                "total_entries": self.total_entries_made,
+                "entry_count": 1,
                 "signal_period_id": signal_period_id,
                 "golden_cross": True,
                 "multi_timeframe_touch": True,
@@ -257,34 +263,26 @@ class GoldenCrossStrategy(Strategy):
         )
 
     def reset_state(self):
-        """Completely reset strategy state - use with caution"""
-        self.entry_count = 0
         self.last_high = None
-        self.current_signal_period_id = None
-        self.total_entries_made = 0
+        self.last_pyramid_timestamp = None
 
     def generate_all_signals(self, data: pd.DataFrame) -> pd.DataFrame:
-        """
-        Generate all signals for backtesting with proper signal period tracking.
-        Each signal period gets a unique ID and proper entry counting.
-        """
         data_with_indicators = self.calculate_indicators(data)
         ma_periods = self.parameters["ma_periods"]["daily"]
         
         if len(data_with_indicators) < max(ma_periods):
             return pd.DataFrame()
         
-        # NOTE: Find golden cross points
+        # Find golden cross points
         ma_cols = [f"ma_{p}" for p in ma_periods]
         golden_cross_mask = (data_with_indicators[ma_cols[0]] > data_with_indicators[ma_cols[1]]) & \
                            (data_with_indicators[ma_cols[1]] > data_with_indicators[ma_cols[2]])
         
-        # NOTE: Generate signals with consistent signal period tracking
         signals = []
-        entry_count = 0
         last_high = None
         current_signal_period_id = None
-        total_entries_made = 0
+        entries_in_current_period = 0
+        last_signal_timestamp = None
         
         for i in range(max(ma_periods), len(data_with_indicators)):
             current_row = data_with_indicators.iloc[i]
@@ -294,46 +292,41 @@ class GoldenCrossStrategy(Strategy):
             if last_high is None or current_price > last_high:
                 last_high = current_price
             
-            has_golden_cross = golden_cross_mask.iloc[i]
-            
-            if has_golden_cross:
-                has_mtf_touch = self.check_mtf_touch(current_price, timestamp)
+            # Golden Cross 활성화된 동안 계속 신호 생성
+            if golden_cross_mask.iloc[i]:
+                # 새로운 Golden Cross 기간 시작
+                if current_signal_period_id is None:
+                    current_signal_period_id = f"GC_{timestamp.strftime('%Y%m%d_%H%M%S')}"
+                    entries_in_current_period = 0
                 
-                if has_mtf_touch:
-                    # Generate unique signal period ID
-                    signal_period_id = f"{timestamp.strftime('%Y%m%d_%H%M%S')}"
-                    
-                    # Check if this is a new signal period
-                    if current_signal_period_id != signal_period_id:
-                        current_signal_period_id = signal_period_id
-                        entry_count = 0  # Reset for new period
-                        last_high = current_price
-                    
-                    max_entries = self.parameters["position_sizing"]["max_entries"]
-                    if entry_count < max_entries:
-                        entry_count += 1
-                        total_entries_made += 1
+                # MTF Touch 체크하고 피라미딩 신호 생성
+                if self.check_mtf_touch(current_price, timestamp):
+                    # 너무 빈번한 신호 방지 - 최소 2바 간격
+                    if last_signal_timestamp is None or \
+                       data_with_indicators.index.get_loc(timestamp) - data_with_indicators.index.get_loc(last_signal_timestamp) >= 2:
                         
-                        signals.append({
-                            'timestamp': timestamp,
-                            'type': ActionType.BUY.value,
-                            'strength': 0.8,
-                            'metadata': {
-                                'golden_cross': True,
-                                'multi_timeframe_touch': True,
-                                'entry_count': entry_count,
-                                'total_entries': total_entries_made,
-                                'signal_period_id': signal_period_id,
-                                'last_high': float(last_high),
-                                'position_sizing': self.parameters["position_sizing"],
-                                'signal_period_start': entry_count == 1
-                            }
-                        })
+                        max_entries = self.parameters["position_sizing"]["max_entries"]
+                        if entries_in_current_period < max_entries:
+                            entries_in_current_period += 1
+                            last_signal_timestamp = timestamp
+                            
+                            signals.append({
+                                'timestamp': timestamp,
+                                'type': ActionType.BUY.value,
+                                'strength': 0.8,
+                                'metadata': {
+                                    'golden_cross': True,
+                                    'multi_timeframe_touch': True,
+                                    'entry_count': entries_in_current_period,
+                                    'signal_period_id': current_signal_period_id,
+                                    'last_high': float(last_high),
+                                    'position_sizing': self.parameters["position_sizing"]
+                                }
+                            })
             else:
-                # NOTE: No golden cross - end current signal period
+                # Golden Cross 끝남 - 다음 기간을 위해 리셋
                 if current_signal_period_id is not None:
                     current_signal_period_id = None
-                    entry_count = 0
-                    last_high = None
+                    entries_in_current_period = 0
         
         return pd.DataFrame(signals).set_index('timestamp') if signals else pd.DataFrame()
