@@ -254,77 +254,91 @@ def create_trades_plot(
     ax2 = plt.subplot2grid((5, 2), (3, 0), rowspan=2)
     ax3 = plt.subplot2grid((5, 2), (3, 1), rowspan=2)
     
-    # === Subplot 1: Enhanced Position Timeline ===
-    if equity_curve is not None and 'position_count' in equity_curve.columns:
+    # === Subplot 1: Trade Summary Visualization ===
+    if trades_df is not None and not trades_df.empty:
         try:
-            positions = equity_curve['position_count'].fillna(0)
+            # Calculate trade statistics
+            total_trades = len(trades_df)
             
-            # Plot position count as step function
-            ax1.step(equity_curve.index, positions, where='post', color='#2E86AB', linewidth=2, label='Position Count')
-            ax1.fill_between(equity_curve.index, 0, positions, step='post', alpha=0.3, color='#2E86AB')
-            
-            # Find and annotate entry/exit points
-            position_changes = positions.diff()
-            
-            # Mark entries (position increases)
-            entries = equity_curve[position_changes > 0]
-            for idx, row in entries.iterrows():
-                pos_count = int(positions.loc[idx])
-                # Draw vertical line for entry
-                ax1.axvline(x=idx, color='green', alpha=0.5, linestyle='--', linewidth=1)
-                # Annotate with entry number
-                ax1.annotate(f'Entry {pos_count}', 
-                           xy=(idx, positions.loc[idx]),
-                           xytext=(0, 10), textcoords='offset points',
-                           fontsize=8, color='green', rotation=45)
-            
-            # Mark exits (position decreases)
-            exits = equity_curve[position_changes < 0]
-            for idx, row in exits.iterrows():
-                # Draw vertical line for exit
-                ax1.axvline(x=idx, color='red', alpha=0.5, linestyle='--', linewidth=1)
-                # Check if full exit or partial
-                if positions.loc[idx] == 0:
-                    ax1.annotate('Full Exit', 
-                               xy=(idx, positions.shift(1).loc[idx]),
-                               xytext=(0, -15), textcoords='offset points',
-                               fontsize=8, color='red', rotation=45)
+            # Get entry counts
+            entry_counts = []
+            for idx, trade in trades_df.iterrows():
+                if 'metadata' in trades_df.columns and isinstance(trade['metadata'], dict):
+                    entry_counts.append(trade['metadata'].get('entry_count', 1))
                 else:
-                    ax1.annotate(f'Partial Exit', 
-                               xy=(idx, positions.loc[idx]),
-                               xytext=(0, -15), textcoords='offset points',
-                               fontsize=8, color='orange', rotation=45)
+                    entry_counts.append(1)
             
-            # Add grid lines for each position level
-            max_pos = int(positions.max()) if positions.max() > 0 else 10
-            for i in range(1, max_pos + 1):
-                ax1.axhline(y=i, color='gray', alpha=0.2, linestyle=':')
-            
-            ax1.set_ylabel('Position Count')
-            ax1.set_xlabel('Date')
-            ax1.set_title(f'{strategy_name} - Position Timeline (Entries 1-{max_pos} & Exits)')
-            ax1.set_ylim(bottom=-0.5, top=max_pos + 0.5)
-            ax1.grid(True, alpha=0.3)
-            ax1.legend(loc='upper right')
-            
-            # Format dates
-            try:
-                date_range = (equity_curve.index[-1] - equity_curve.index[0]).days
-                if date_range > 365:
-                    ax1.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
-                    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-                elif date_range > 90:
-                    ax1.xaxis.set_major_locator(mdates.MonthLocator())
-                    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
+            # Create price chart with trade markers
+            if equity_curve is not None and not equity_curve.empty:
+                # Plot equity curve
+                ax1.plot(equity_curve.index, equity_curve['total_value'], 
+                        color='#2E86AB', linewidth=1.5, alpha=0.7, label='Portfolio Value')
+                
+                # Mark trades with different colors based on entry count
+                colors = plt.cm.RdYlGn(np.linspace(0.2, 0.8, 10))
+                
+                for idx, trade in trades_df.iterrows():
+                    entry_time = pd.to_datetime(trade['entry_time'])
+                    exit_time = pd.to_datetime(trade['exit_time'])
+                    entry_count = entry_counts[idx]
+                    
+                    # Color based on entry count
+                    color = colors[min(entry_count - 1, 9)]
+                    
+                    # Draw vertical span for trade duration
+                    ax1.axvspan(entry_time, exit_time, alpha=0.2, color=color)
+                    
+                    # Mark entry point
+                    if entry_time in equity_curve.index:
+                        val = equity_curve.loc[entry_time, 'total_value']
+                        ax1.scatter(entry_time, val, s=50, c=[color], 
+                                   marker='^', edgecolors='black', linewidth=0.5, zorder=5)
+                    
+                    # Mark exit point
+                    if exit_time in equity_curve.index:
+                        val = equity_curve.loc[exit_time, 'total_value']
+                        ax1.scatter(exit_time, val, s=50, c='red' if trade['pnl'] < 0 else 'green', 
+                                   marker='v', edgecolors='black', linewidth=0.5, zorder=5)
+                
+                # Add statistics text box
+                stats_text = f'Total Trades: {total_trades}\n'
+                stats_text += f'Single Entry: {entry_counts.count(1)}\n'
+                stats_text += f'Multi Entry: {total_trades - entry_counts.count(1)}\n'
+                stats_text += f'Max Entries: {max(entry_counts)}'
+                
+                ax1.text(0.02, 0.98, stats_text, transform=ax1.transAxes,
+                        fontsize=10, verticalalignment='top',
+                        bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+                
+                ax1.set_ylabel('Portfolio Value ($)', fontsize=11)
+                ax1.set_xlabel('Date', fontsize=11)
+                ax1.set_title(f'{strategy_name} - Equity Curve with Trade Markers', fontsize=13, fontweight='bold')
+                ax1.grid(True, alpha=0.3)
+                ax1.legend(loc='upper right', fontsize=9)
+                
+                # Format dates
+                ax1.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
+                ax1.xaxis.set_major_locator(mdates.MonthLocator())
                 plt.setp(ax1.xaxis.get_majorticklabels(), rotation=45, ha='right')
-            except:
-                pass
+            else:
+                # Fallback: Show trade count by entry type
+                entry_dist = pd.Series(entry_counts).value_counts().sort_index()
+                ax1.bar(entry_dist.index, entry_dist.values, color='#2E86AB', alpha=0.7)
+                ax1.set_xlabel('Number of Entries', fontsize=11)
+                ax1.set_ylabel('Trade Count', fontsize=11)
+                ax1.set_title(f'{strategy_name} - Trade Distribution by Entry Count', fontsize=13, fontweight='bold')
+                ax1.grid(True, alpha=0.3, axis='y')
+                
+                # Add value labels on bars
+                for x, y in zip(entry_dist.index, entry_dist.values):
+                    ax1.text(x, y, str(y), ha='center', va='bottom', fontsize=10)
+            
         except Exception as e:
             ax1.text(0.5, 0.5, f'Error: {str(e)[:50]}', ha='center', va='center', transform=ax1.transAxes)
-            ax1.set_title(f'{strategy_name} - Position Timeline')
+            ax1.set_title(f'{strategy_name} - Trade Timeline')
     else:
-        ax1.text(0.5, 0.5, 'No position data', ha='center', va='center', transform=ax1.transAxes)
-        ax1.set_title(f'{strategy_name} - Position Timeline')
+        ax1.text(0.5, 0.5, 'No trade data available', ha='center', va='center', transform=ax1.transAxes)
+        ax1.set_title(f'{strategy_name} - Trade Timeline')
     
     # === Subplot 2: Trade Duration Distribution ===
     if trades_df is not None and not trades_df.empty:

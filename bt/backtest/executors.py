@@ -369,6 +369,8 @@ class OrderExecutor:
             slippage=costs["slippage"]
         )
         
+        order.timestamp = timestamp
+        
         success, position = self._handle_position(
             order, portfolio, fill_price, timestamp, costs
         )
@@ -396,7 +398,7 @@ class OrderExecutor:
             )
         
         if order.side != existing_position.side:
-            return self._handle_opposite_position(
+            return self._handle_closing_position(
                 order, portfolio, existing_position, fill_price, timestamp, costs
             )
         
@@ -427,7 +429,7 @@ class OrderExecutor:
         portfolio.add_position(position)
         return True, position
     
-    def _handle_opposite_position(
+    def _handle_closing_position(
         self, 
         order: Order, 
         portfolio: Portfolio, 
@@ -478,12 +480,10 @@ class OrderExecutor:
             f"[Period: {signal_period_id}]"
         )
         
-        # Calculate new average entry price
         open_qty = existing_position.open_quantity
         total_cost = existing_position.entry_price * open_qty + fill_price * order.quantity
         total_quantity = open_qty + order.quantity
         
-        # Update position
         existing_position.entry_price = total_cost / total_quantity
         existing_position.quantity = existing_position.closed_quantity + total_quantity
         existing_position.commission += costs["fee"]
@@ -496,7 +496,6 @@ class OrderExecutor:
             else:
                 existing_position.metadata.update(order.metadata)
         
-        # Update portfolio cash
         total_cost = order.quantity * fill_price + costs["fee"] + costs["slippage"]
         if order.side == ActionType.BUY:
             if portfolio.cash < total_cost:

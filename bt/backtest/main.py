@@ -72,14 +72,8 @@ def main():
         print("\nPlots saved to bt_results/")
     except Exception as e:
         print(f"\nCould not generate plots: {e}")
-    
     return result
 
 
 if __name__ == "__main__":
     result = main()
-    
-    # NOTE: For detailed portfolio datas
-    print(result.portfolio.summary())
-    print(result.trades.summary())
-    print(result.equity_curve.summary())
