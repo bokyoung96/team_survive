@@ -30,7 +30,7 @@ class ValidationState:
     bar_order_count: Dict[str, int] = None
     last_entry_bar: Dict[str, pd.Timestamp] = None
     position_entries: Dict[str, int] = None  # Track entry count per position
-    max_entries_per_position: int = 5
+    max_entries_per_position: int = 10  # Allow up to 10 martingale entries
     
     def __post_init__(self):
         if self.executed_signal_ids is None:
@@ -210,13 +210,21 @@ class OrderValidator:
         
         # Only check for entry orders
         if order.side == ActionType.BUY:
-            current_entries = self.state.get_position_entries(order.symbol)
+            # Get current entries from position metadata (the source of truth)
+            current_entries = 0
+            if position and position.is_open:
+                current_entries = position.metadata.get('entry_count', 1)
             
-            # If we have an open position and trying to add
+            # Get max_entries from order metadata (from strategy) or use default
+            max_entries = self.state.max_entries_per_position  # default
+            if order.metadata and 'position_sizing' in order.metadata:
+                max_entries = order.metadata['position_sizing'].get('max_entries', max_entries)
+            
+            # Check if we've reached the limit
             if position and position.is_open and position.side == order.side:
-                if current_entries >= self.state.max_entries_per_position:
+                if current_entries >= max_entries:
                     self._validation_errors.append(
-                        f"Max entries ({self.state.max_entries_per_position}) reached"
+                        f"Max entries ({max_entries}) reached for position with {current_entries} entries"
                     )
                     return False
         

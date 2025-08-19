@@ -1,12 +1,149 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Any, List
 import pandas as pd
+from dataclasses import dataclass
 
 from backtest.models import Order, Position, Portfolio
-from backtest.types import ActionType, OrderType, OrderStatus, TransactionCost
+from backtest.types import ActionType, OrderType, OrderStatus, TransactionCost, Signal
 from backtest.validators import OrderValidator
 from backtest.logger import get_logger
+
+
+@dataclass
+class SignalContext:
+    signal: Signal
+    portfolio: Portfolio
+    position: Optional[Position]
+    current_bar: pd.Series
+    timestamp: datetime
+    symbol: str
+
+
+class SignalProcessor:
+    def __init__(self, order_creator: Optional['OrderCreator'] = None, logger=None):
+        self.order_creator = order_creator or OrderCreator()
+        self.logger = logger or get_logger(__name__)
+    
+    def process_signal(self, context: SignalContext) -> List[Order]:
+        if not self._validate_signal(context):
+            return []
+        
+        orders = self._convert_signal_to_orders(context)
+        return [order for order in orders if order is not None]
+    
+    def _validate_signal(self, context: SignalContext) -> bool:
+        signal = context.signal
+        
+        if signal.strength <= 0:
+            self.logger.warning(f"Invalid signal strength: {signal.strength}")
+            return False
+        
+        # NOTE: Position-specific validation
+        if signal.is_entry and context.position and context.position.is_open:
+            if not self._validate_martingale_entry(context):
+                return False
+        
+        if signal.is_exit and (not context.position or not context.position.is_open):
+            self.logger.warning("Exit signal but no open position")
+            return False
+        
+        return True
+    
+    def _validate_martingale_entry(self, context: SignalContext) -> bool:
+        signal = context.signal
+        position = context.position
+        
+        # NOTE: Check signal period consistency for martingale
+        signal_period_id = signal.metadata.get('signal_period_id')
+        position_signal_period = position.metadata.get('signal_period_id')
+        
+        if signal_period_id and position_signal_period:
+            if signal_period_id != position_signal_period:
+                self.logger.info(f"Different signal periods: {signal_period_id} vs {position_signal_period}")
+                return False
+        
+        # NOTE: Check max entries limit
+        max_entries = signal.metadata.get('position_sizing', {}).get('max_entries', 1)
+        current_entries = position.metadata.get('entry_count', 1)
+        
+        if current_entries >= max_entries:
+            self.logger.info(f"Max entries reached: {current_entries}/{max_entries}")
+            return False
+        
+        return True
+    
+    def _convert_signal_to_orders(self, context: SignalContext) -> List[Order]:
+        signal = context.signal
+        orders = []
+        
+        if signal.is_entry:
+            order = self._create_entry_order(context)
+            if order:
+                orders.append(order)
+        
+        elif signal.is_exit:
+            exit_orders = self._create_exit_orders(context)
+            orders.extend(exit_orders)
+
+        return orders
+    
+    def _create_entry_order(self, context: SignalContext) -> Optional[Order]:
+        signal = context.signal
+        
+        # NOTE: Determine order side based on signal type
+        if signal.type == ActionType.BUY:
+            side = ActionType.BUY
+        elif signal.type == ActionType.SELL:
+            side = ActionType.SELL
+        elif signal.type == ActionType.ENTRY:
+            side = ActionType.BUY
+        else:
+            self.logger.warning(f"Unsupported entry signal type: {signal.type}")
+            return None
+        
+        return self.order_creator.create_order(
+            signal_type=side,
+            strength=signal.strength,
+            symbol=context.symbol,
+            timestamp=context.timestamp,
+            portfolio=context.portfolio,
+            metadata=signal.metadata
+        )
+    
+    def _create_exit_orders(self, context: SignalContext) -> List[Order]:
+        signal = context.signal
+        position = context.position
+        orders = []
+        
+        if not position or not position.is_open:
+            return orders
+        
+        # NOTE: Handle partial exits
+        exit_quantity = None
+        if signal.quantity and signal.quantity < position.open_quantity:
+            exit_quantity = signal.quantity
+        
+        # NOTE: Create exit order
+        exit_metadata = signal.metadata.copy()
+        if exit_quantity:
+            exit_metadata['exit_quantity'] = float(exit_quantity)
+        
+        order = self.order_creator.create_order(
+            signal_type=ActionType.CLOSE,
+            strength=signal.strength,
+            symbol=context.symbol,
+            timestamp=context.timestamp,
+            portfolio=context.portfolio,
+            metadata=exit_metadata
+        )
+        
+        if order:
+            if exit_quantity:
+                order.quantity = exit_quantity
+            orders.append(order)
+        
+        return orders
 
 
 class OrderCreator:
@@ -45,6 +182,7 @@ class OrderCreator:
         portfolio: Portfolio, 
         symbol: str
     ) -> Tuple[Optional[ActionType], Decimal]:
+        # NOTE: Create exit order
         if signal_type in [ActionType.SELL, ActionType.EXIT, ActionType.CLOSE]:
             position = portfolio.get_position(symbol)
             if not position or not position.is_open:
@@ -54,6 +192,7 @@ class OrderCreator:
             side = ActionType.SELL if position.side == ActionType.BUY else ActionType.BUY
             return side, quantity
         
+        # NOTE: Create entry order
         elif signal_type in [ActionType.BUY, ActionType.ENTRY]:
             side = ActionType.BUY if signal_type == ActionType.BUY else ActionType.SELL
             quantity = Decimal("-1")
@@ -95,21 +234,40 @@ class QuantityCalculator:
             entry_count = order.metadata.get("entry_count", 1)
             
             if entry_count > position_sizing["max_entries"]:
-                self.logger.warning(f"Entry count exceeds max: {entry_count}")
+                self.logger.debug(f"Entry count {entry_count} exceeds max {position_sizing['max_entries']} - order rejected")
                 return False, Decimal("0")
             
             initial_size = Decimal(str(position_sizing["initial_size"]))
             scale_factor = Decimal(str(position_sizing["scale_factor"]))
             size_percent = initial_size * (scale_factor ** (entry_count - 1))
-            quantity = portfolio.get_total_value() * size_percent / fill_price
+            required_value = portfolio.get_total_value() * size_percent
+            quantity = required_value / fill_price
+            
+            # NOTE: Log sizing details
+            self.logger.debug(
+                f"Entry #{entry_count}: size_percent={float(size_percent):.4f}, "
+                f"required=${float(required_value):.2f}, available_cash=${float(portfolio.cash):.2f}"
+            )
         else:
             quantity = portfolio.cash * max_cash_usage / fill_price
         
-        # Ensure we don't exceed available cash
         max_quantity = portfolio.cash * max_cash_usage / fill_price
-        quantity = min(quantity, max_quantity)
         
-        return (True, quantity) if quantity > 0 else (False, Decimal("0"))
+        if quantity > max_quantity:
+            self.logger.warning(
+                f"Entry #{order.metadata.get('entry_count', 1)} requires ${float(quantity * fill_price):.2f} "
+                f"but only ${float(portfolio.cash):.2f} available - reducing quantity"
+            )
+            quantity = max_quantity
+        
+        if quantity <= 0:
+            self.logger.warning(
+                f"Entry #{order.metadata.get('entry_count', 1)} rejected - insufficient cash "
+                f"(available: ${float(portfolio.cash):.2f})"
+            )
+            return False, Decimal("0")
+            
+        return True, quantity
     
     def _calculate_sell_quantity(
         self, 
@@ -197,7 +355,7 @@ class OrderExecutor:
             )
             if not is_valid:
                 order.status = OrderStatus.REJECTED
-                self.logger.warning(f"Validation failed after quantity calc: {error_msg}")
+                self.logger.debug(f"Order validation failed: {error_msg}")
                 return False, None
         
         costs = self.transaction_cost.calculate_cost(
@@ -333,7 +491,10 @@ class OrderExecutor:
         existing_position.entry_time = timestamp
         
         if order.metadata:
-            existing_position.metadata.update(order.metadata)
+            if existing_position.metadata is None:
+                existing_position.metadata = order.metadata.copy()
+            else:
+                existing_position.metadata.update(order.metadata)
         
         # Update portfolio cash
         total_cost = order.quantity * fill_price + costs["fee"] + costs["slippage"]
