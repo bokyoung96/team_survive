@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Optional, Dict, List, Any, Tuple
+from typing import Optional, Dict, List, Any
 import pandas as pd
 from tqdm import tqdm
 
@@ -110,7 +110,8 @@ class BacktestEngine:
         equity_curve: List[Dict[str, Any]],
         trades: List[Dict[str, Any]],
         symbol: str,
-        initial_capital: Decimal
+        initial_capital: Decimal,
+        strategy: Optional[Any] = None
     ) -> BacktestResult:
         equity_df = pd.DataFrame(equity_curve)
         if not equity_df.empty:
@@ -119,7 +120,20 @@ class BacktestEngine:
             equity_df["drawdown"] = (equity_df["total_value"] - running_max) / running_max
         
         trades_df = pd.DataFrame(trades) if trades else pd.DataFrame()
-        signals_df = pd.DataFrame()  # No pre-generated signals in new approach
+        
+        # Get signals from strategy if available
+        signals_data = []
+        if strategy and hasattr(strategy, 'signals_history'):
+            for timestamp, signal in strategy.signals_history:
+                signals_data.append({
+                    "timestamp": timestamp,
+                    "type": signal.type.value,
+                    "strength": signal.strength,
+                    "price": float(signal.price) if signal.price else None,
+                    "quantity": float(signal.quantity) if signal.quantity else None,
+                    "metadata": signal.metadata
+                })
+        signals_df = pd.DataFrame(signals_data)
         
         if not equity_df.empty and not trades_df.empty:
             performance_metrics = self.analyzer.analyze_performance(
@@ -203,7 +217,7 @@ class BacktestEngine:
         self._close_final_position(portfolio, symbol, ohlcv_data, trades)
         
         return self._build_result(
-            portfolio, equity_curve, trades, symbol, initial_capital
+            portfolio, equity_curve, trades, symbol, initial_capital, strategy
         )
     
     def _run_loop(
@@ -255,6 +269,9 @@ class BacktestEngine:
             
             # Process signal if generated
             if signal:
+                # Record signal in strategy history
+                strategy.record_signal(context.timestamp, signal)
+                
                 self._process_signal(
                     signal, context, orders, trades
                 )
@@ -293,9 +310,9 @@ class BacktestEngine:
             if success:
                 orders.append(order)
                 
-                # Record trade if position was closed
-                if order.side == ActionType.SELL and position:
-                    self._record_trade(order, position, trades)
+                # Record trade if this was an exit order
+                if order.side == ActionType.SELL:
+                    self._record_completed_trades(order, context.portfolio, trades)
                     
                 # Log execution
                 self.logger.info(
@@ -322,14 +339,49 @@ class BacktestEngine:
             "drawdown": 0.0  # Will be calculated later
         })
     
+    def _record_completed_trades(
+        self, 
+        order: Order, 
+        portfolio: Portfolio, 
+        trades: List[Dict[str, Any]]
+    ) -> None:
+        """Record any trades that were completed by this exit order"""
+        # Check recently closed positions that match this order
+        for closed_position in portfolio.closed_positions:
+            # Only record if this position was closed by this specific order
+            # (check if exit_time matches order timestamp)
+            if (closed_position.exit_time == order.timestamp and 
+                closed_position.symbol == order.symbol):
+                
+                trades.append({
+                    "entry_time": closed_position.entry_time,
+                    "exit_time": order.timestamp,
+                    "entry_price": float(closed_position.entry_price),
+                    "exit_price": float(order.filled_price),
+                    "quantity": float(closed_position.quantity),
+                    "side": closed_position.side.value,
+                    "pnl": float(closed_position.realized_pnl),
+                    "commission": float(closed_position.commission),
+                    "slippage": float(closed_position.slippage),
+                    "metadata": closed_position.metadata
+                })
+                
+                # Log the trade recording
+                self.logger.info(
+                    f"Recorded trade: {closed_position.side.value} "
+                    f"{closed_position.quantity} @ ${closed_position.entry_price} -> "
+                    f"${order.filled_price}, PnL: ${closed_position.realized_pnl}"
+                )
+                break  # Only record once per order
+    
     def _record_trade(
         self, 
         order: Order, 
         position: Position, 
         trades: List[Dict[str, Any]]
     ) -> None:
-        """Record completed trade"""
-        if position.status.value in ['closed', 'partially_closed']:
+        """Legacy method - Record completed trade (kept for compatibility)"""
+        if position and position.status.value in ['closed', 'partially_closed']:
             trades.append({
                 "entry_time": position.entry_time,
                 "exit_time": order.timestamp,
