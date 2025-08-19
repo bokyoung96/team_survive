@@ -24,8 +24,8 @@ def main():
     loader = DataLoader(factory)
     
     symbol = Symbol.from_string("BTC/USDT:USDT")
-    start_date = KST.localize(datetime(2022, 1, 1))
-    end_date = KST.localize(datetime(2025, 8, 15))
+    start_date = KST.localize(datetime(2020, 1, 1))
+    end_date = KST.localize(datetime(2025, 8, 18))
     date_range = TimeRange(start_date, end_date)
     
     data = (MultiTimeframeData(loader)
@@ -78,3 +78,8 @@ def main():
 
 if __name__ == "__main__":
     result = main()
+    
+    # NOTE: For detailed portfolio datas
+    print(result.portfolio.summary())
+    print(result.trades.summary())
+    print(result.equity_curve.summary())

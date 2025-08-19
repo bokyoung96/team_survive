@@ -72,10 +72,14 @@ class MovingAverage:
     def __init__(self, name: str, length: int = 20):
         self.name = name
         self._length = length
-
+    
     def calculate(self, ohlcv: pd.DataFrame) -> pd.DataFrame:
         ma = ohlcv["close"].rolling(window=self._length).mean()
         return pd.DataFrame({self.name: ma})
+    
+    def reset(self) -> None:
+        """Reset indicator state for new calculations"""
+        pass
 
 
 class RSI:

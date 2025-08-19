@@ -9,7 +9,9 @@ from backtest.models import (
     BacktestResult
 )
 from backtest.types import ActionType, TransactionCost
-from backtest.executors import OrderCreator, OrderValidator, OrderExecutor
+from backtest.executors import OrderCreator, OrderValidator, OrderExecutor, SignalProcessor, SignalContext
+from backtest.strategies import TradingContext, StreamingStrategy
+from backtest.models import Order, Position
 from backtest.performance import PerformanceAnalyzer
 from backtest.logger import get_logger
 
@@ -39,34 +41,8 @@ class BacktestEngine:
         self.order_creator = OrderCreator()
         self.order_validator = OrderValidator()
         self.order_executor = OrderExecutor(self.transaction_cost)
+        self.signal_processor = SignalProcessor(self.order_creator)
 
-    def run_backtest(
-        self,
-        strategy: Any,
-        ohlcv_data: pd.DataFrame,
-        initial_capital: Decimal,
-        symbol: str,
-        intraday_timeframe: str = "3m"
-    ) -> BacktestResult:
-        self._validate_inputs(ohlcv_data, initial_capital, symbol, strategy)
-        
-        portfolio = Portfolio(initial_capital=initial_capital)
-        equity_curve: List[Dict[str, Any]] = []
-        trades: List[Dict[str, Any]] = []
-        orders: List[Any] = []
-        
-        primary_data = self._select_primary_data(ohlcv_data, strategy, intraday_timeframe)
-        
-        self._run_backtest_loop(
-            primary_data, symbol, portfolio, 
-            equity_curve, trades, orders, ohlcv_data, strategy, intraday_timeframe
-        )
-        
-        self._close_final_position(portfolio, symbol, primary_data, trades)
-        
-        return self._build_result(
-            portfolio, equity_curve, trades, symbol, initial_capital
-        )
     
     def _validate_inputs(
         self,
@@ -85,66 +61,6 @@ class BacktestEngine:
             raise ValueError("Strategy cannot be None")
     
     
-    def _select_primary_data(
-        self, 
-        ohlcv_data: pd.DataFrame, 
-        strategy: Any, 
-        intraday_frequency: str
-    ) -> pd.DataFrame:
-        if strategy and hasattr(strategy, 'data') and strategy.data:
-            if intraday_frequency in strategy.data:
-                self.logger.info(f"Using {intraday_frequency} data")
-                return strategy.data[intraday_frequency]
-        
-        self.logger.info("Using daily data")
-        return ohlcv_data
-    
-    def _run_backtest_loop(
-        self,
-        primary_data: pd.DataFrame,
-        symbol: str,
-        portfolio: Portfolio,
-        equity_curve: List[Dict[str, Any]],
-        trades: List[Dict[str, Any]],
-        orders: List[Any],
-        ohlcv_data: pd.DataFrame,
-        strategy: Any,
-        intraday_timeframe: str
-    ) -> None:
-        for i, (timestamp, row) in enumerate(tqdm(primary_data.iterrows(), desc="Running backtest")):
-            context = BacktestContext(
-                portfolio=portfolio,
-                equity_curve=equity_curve,
-                trades=trades,
-                orders=orders,
-                symbol=symbol,
-                current_prices={symbol: Decimal(str(row["close"]))},
-                timestamp=timestamp,
-                current_row=row
-            )
-            
-            self._update_equity_curve(context)
-            
-            current_position = portfolio.get_position(symbol)
-            
-            # Get current data slice for strategy
-            data_slice = ohlcv_data.iloc[:i+1]
-            
-            # Generate signal from strategy with current position context
-            signal = strategy.generate_signal(data_slice, current_position, portfolio)
-            
-            if signal:
-                signal_dict = {
-                    'type': signal.type.value if hasattr(signal.type, 'value') else signal.type,
-                    'strength': signal.strength,
-                    'metadata': signal.metadata
-                }
-                
-                # Process the signal (entry or exit)
-                if signal.type in [ActionType.BUY, ActionType.ENTRY]:
-                    self._process_entry_signal(context, signal_dict)
-                elif signal.type in [ActionType.SELL, ActionType.EXIT, ActionType.CLOSE]:
-                    self._process_exit_signal(context, signal_dict)
     
     def _update_equity_curve(self, context: BacktestContext) -> None:
         metrics = context.portfolio.calculate_metrics(context.current_prices)
@@ -158,74 +74,6 @@ class BacktestEngine:
             "unrealized_pnl": float(metrics["unrealized_pnl"]),
             "drawdown": 0.0
         })
-    
-    
-    
-    
-    def _process_exit_signal(self, context: BacktestContext, signal: Dict[str, Any]) -> bool:
-        signal_type = self._normalize_signal_type(signal['type'])
-        
-        if signal_type == ActionType.CLOSE:
-            return self._execute_signal_order(context, signal)
-        
-        return False
-    
-    def _process_entry_signal(self, context: BacktestContext, signal: Dict[str, Any]) -> bool:
-        if not self._should_process_entry_signal(context, signal):
-            return False
-        
-        return self._execute_signal_order(context, signal)
-    
-    def _should_process_entry_signal(
-        self, 
-        context: BacktestContext, 
-        signal: Dict[str, Any]
-    ) -> bool:
-        current_position = context.portfolio.get_position(context.symbol)
-        metadata = signal.get('metadata', {})
-        
-        if current_position and current_position.is_open:
-            signal_period_id = metadata.get('signal_period_id')
-            position_signal_period = current_position.metadata.get('signal_period_id')
-            
-            if (signal_period_id and position_signal_period and 
-                signal_period_id != position_signal_period):
-                return False
-        
-        return True
-    
-    def _execute_signal_order(self, context: BacktestContext, signal: Dict[str, Any]) -> bool:
-        signal_type = self._normalize_signal_type(signal['type'])
-        
-        order = self.order_creator.create_order(
-            signal_type=signal_type,
-            strength=signal['strength'],
-            symbol=context.symbol,
-            timestamp=context.timestamp,
-            portfolio=context.portfolio,
-            metadata=signal['metadata']
-        )
-        
-        if not order:
-            return False
-        
-        if not self.order_validator.validate_order(order, context.portfolio, context.current_row):
-            return False
-        
-        success, _ = self.order_executor.execute_order(
-            order, context.current_row, context.portfolio, context.timestamp
-        )
-        
-        if success:
-            context.orders.append(order)
-            return True
-        
-        return False
-    
-    def _normalize_signal_type(self, signal_type) -> ActionType:
-        if isinstance(signal_type, ActionType):
-            return signal_type
-        return ActionType(signal_type)
     
     
     def _close_final_position(
@@ -315,3 +163,182 @@ class BacktestEngine:
                 }
             }
         )
+
+    def run_backtest(
+        self,
+        strategy: StreamingStrategy,
+        ohlcv_data: pd.DataFrame,
+        initial_capital: Decimal,
+        symbol: str,
+        warmup_periods: int = 50
+    ) -> BacktestResult:
+        """
+        Run backtest with sequential bar processing
+        
+        Args:
+            strategy: Strategy instance
+            ohlcv_data: OHLCV DataFrame with datetime index
+            initial_capital: Starting capital
+            symbol: Trading symbol
+            warmup_periods: Number of periods for indicator warmup
+        """
+        self._validate_inputs(ohlcv_data, initial_capital, symbol, strategy)
+        
+        # Initialize portfolio and data structures
+        portfolio = Portfolio(initial_capital=initial_capital)
+        equity_curve: List[Dict[str, Any]] = []
+        trades: List[Dict[str, Any]] = []
+        orders: List[Any] = []
+        
+        # Reset strategy state
+        strategy.reset_state()
+        
+        # Run backtest loop
+        self._run_loop(
+            strategy, ohlcv_data, symbol, portfolio, 
+            equity_curve, trades, orders, warmup_periods
+        )
+        
+        # Close any remaining positions
+        self._close_final_position(portfolio, symbol, ohlcv_data, trades)
+        
+        return self._build_result(
+            portfolio, equity_curve, trades, symbol, initial_capital
+        )
+    
+    def _run_loop(
+        self,
+        strategy: StreamingStrategy,
+        ohlcv_data: pd.DataFrame,
+        symbol: str,
+        portfolio: Portfolio,
+        equity_curve: List[Dict[str, Any]],
+        trades: List[Dict[str, Any]],
+        orders: List[Any],
+        warmup_periods: int
+    ) -> None:
+        """Run the main backtest loop"""
+        
+        total_bars = len(ohlcv_data)
+        
+        for i, (timestamp, bar) in enumerate(tqdm(ohlcv_data.iterrows(), 
+                                                  desc="Running Backtest", 
+                                                  total=total_bars)):
+            
+            # Get current position
+            current_position = portfolio.get_position(symbol)
+            
+            # Create limited lookback data
+            lookback_data = strategy._get_lookback_data(ohlcv_data, i)
+            
+            # Create trading context
+            context = TradingContext(
+                portfolio=portfolio,
+                position=current_position,
+                bar_index=i,
+                timestamp=timestamp,
+                current_bar=bar,
+                lookback_data=lookback_data,
+                symbol=symbol
+            )
+            
+            # Update strategy indicators
+            strategy.update_indicators(context)
+            
+            # Skip warmup period
+            if i < warmup_periods:
+                self._update_equity(context, equity_curve)
+                continue
+            
+            # Process current bar
+            signal = strategy.process_bar(context)
+            
+            # Process signal if generated
+            if signal:
+                self._process_signal(
+                    signal, context, orders, trades
+                )
+            
+            # Update equity curve
+            self._update_equity(context, equity_curve)
+    
+    def _process_signal(
+        self,
+        signal,
+        context: TradingContext,
+        orders: List[Any],
+        trades: List[Dict[str, Any]]
+    ) -> None:
+        """Process signal and execute orders"""
+        
+        # Create signal context
+        signal_context = SignalContext(
+            signal=signal,
+            portfolio=context.portfolio,
+            position=context.position,
+            current_bar=context.current_bar,
+            timestamp=context.timestamp,
+            symbol=context.symbol
+        )
+        
+        # Process signal to get orders
+        generated_orders = self.signal_processor.process_signal(signal_context)
+        
+        # Execute each order
+        for order in generated_orders:
+            success, position = self.order_executor.execute_order(
+                order, context.current_bar, context.portfolio, context.timestamp
+            )
+            
+            if success:
+                orders.append(order)
+                
+                # Record trade if position was closed
+                if order.side == ActionType.SELL and position:
+                    self._record_trade(order, position, trades)
+                    
+                # Log execution
+                self.logger.info(
+                    f"Executed {order.side.value} order: "
+                    f"{order.quantity} @ {order.filled_price}"
+                )
+    
+    def _update_equity(
+        self, 
+        context: TradingContext, 
+        equity_curve: List[Dict[str, Any]]
+    ) -> None:
+        """Update equity curve"""
+        current_prices = {context.symbol: context.get_current_price()}
+        metrics = context.portfolio.calculate_metrics(current_prices)
+        
+        equity_curve.append({
+            "timestamp": context.timestamp,
+            "total_value": float(metrics["total_value"]),
+            "cash": float(metrics["cash"]),
+            "position_count": metrics["position_count"],
+            "realized_pnl": float(metrics["realized_pnl"]),
+            "unrealized_pnl": float(metrics["unrealized_pnl"]),
+            "drawdown": 0.0  # Will be calculated later
+        })
+    
+    def _record_trade(
+        self, 
+        order: Order, 
+        position: Position, 
+        trades: List[Dict[str, Any]]
+    ) -> None:
+        """Record completed trade"""
+        if position.status.value in ['closed', 'partially_closed']:
+            trades.append({
+                "entry_time": position.entry_time,
+                "exit_time": order.timestamp,
+                "entry_price": float(position.entry_price),
+                "exit_price": float(order.filled_price),
+                "quantity": float(position.quantity),
+                "side": position.side.value,
+                "pnl": float(position.realized_pnl),
+                "commission": float(position.commission),
+                "slippage": float(position.slippage),
+                "metadata": position.metadata
+            })
