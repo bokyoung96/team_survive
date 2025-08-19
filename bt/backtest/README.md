@@ -51,6 +51,7 @@ DataLoader → strategies.py → SignalType → executors.py → models.py → p
 ## 📁 File Structure & Responsibilities
 
 ### Common Types (`types.py`)
+
 **Primary Responsibility**: Centralized type definitions
 
 ```python
@@ -61,11 +62,13 @@ class TransactionCost:      # Fee and slippage configuration
 ```
 
 **Key Features**:
+
 - Eliminates code duplication across modules
 - Provides consistent type definitions
 - SOLID principle compliance
 
 ### Core Engine (`engine.py`)
+
 **Primary Responsibility**: Orchestrates the entire backtesting process
 
 ```python
@@ -74,6 +77,7 @@ class BacktestEngine:
 ```
 
 **Key Functions**:
+
 - Coordinates all components (strategies, executors, portfolio)
 - Manages the main backtesting loop with logging
 - Handles signal processing and order execution timing
@@ -81,6 +85,7 @@ class BacktestEngine:
 - Calculates portfolio metrics at each time step
 
 ### Strategy Framework (`strategies.py`)
+
 **Primary Responsibility**: Signal generation and technical analysis
 
 ```python
@@ -99,6 +104,7 @@ detect_crossover()
 ```
 
 **Key Features**:
+
 - Abstract Strategy base class for extensibility
 - Built-in Golden Cross strategy with Fibonacci exits
 - Batch signal processing for efficiency
@@ -106,6 +112,7 @@ detect_crossover()
 - Signal strength and metadata support
 
 ### Order Management (`executors.py`)
+
 **Primary Responsibility**: Convert signals to orders and execute them
 
 ```python
@@ -116,6 +123,7 @@ class OrderExecutor:
 ```
 
 **Key Functions**:
+
 - Converts trading signals into executable orders
 - Handles position sizing and risk management
 - Manages order validation and execution logic
@@ -123,6 +131,7 @@ class OrderExecutor:
 - Updates portfolio state after execution
 
 ### Data Models (`models.py`)
+
 **Primary Responsibility**: Core data structures and business logic
 
 ```python
@@ -136,12 +145,14 @@ class BacktestResult:   # Complete backtest output
 ```
 
 **Key Features**:
+
 - Clean separation from type definitions
 - Comprehensive position and portfolio tracking
 - Built-in P&L calculations and risk metrics
 - Uses unified ActionType from types.py
 
 ### Performance Analytics (`performance.py`)
+
 **Primary Responsibility**: Calculate trading performance metrics
 
 ```python
@@ -157,6 +168,7 @@ class PerformanceMetrics:
 ```
 
 **Calculated Metrics**:
+
 - **Return Metrics**: Total, annualized returns
 - **Risk Metrics**: Sharpe, Sortino, max drawdown, Calmar ratio
 - **Trade Statistics**: Win rate, profit factor, average trade metrics
@@ -164,6 +176,7 @@ class PerformanceMetrics:
 - **Exposure Analysis**: Market exposure time, recovery factors
 
 ### Logging System (`logger.py`)
+
 **Primary Responsibility**: Centralized logging for all modules
 
 ```python
@@ -174,12 +187,14 @@ def enable_file_logging()       # Enable file output
 ```
 
 **Key Features**:
+
 - Consistent logging format across all modules
 - Configurable log levels (DEBUG, INFO, WARNING, ERROR)
 - Console and file logging support
 - Module-specific logger instances
 
 ### Usage Examples (`main.py`)
+
 **Primary Responsibility**: Demonstrate real-world usage
 
 ```python
@@ -190,7 +205,7 @@ def run_simple_backtest():
     factory = Factory(exchange, base_path)
     loader = DataLoader(factory)
     data = loader.load(symbol, timeframe, time_range)
-    
+
     # Strategy setup and execution with logging
     strategy = GoldenCrossStrategy()
     engine = BacktestEngine()
@@ -198,11 +213,11 @@ def run_simple_backtest():
 ```
 
 **Features**:
+
 - Integration with real market data via DataLoader
 - Simplified workflow demonstration
 - Automatic logging of backtest progress
 - Error handling and validation examples
-
 
 ## 🚀 Quick Start
 
@@ -370,17 +385,17 @@ class MyCustomStrategy(Strategy):
             name="MyCustomStrategy",
             parameters={"param1": value1, "param2": value2}
         )
-    
+
     def calculate_indicators(self, data: pd.DataFrame) -> pd.DataFrame:
         """Add your technical indicators here."""
         data = data.copy()
         data['my_indicator'] = calculate_my_indicator(data['close'])
         return data
-    
+
     def generate_signal(
-        self, 
-        data: pd.DataFrame, 
-        position=None, 
+        self,
+        data: pd.DataFrame,
+        position=None,
         portfolio=None
     ) -> Optional[Signal]:
         """Implement your signal logic here."""
@@ -397,11 +412,11 @@ class MyCustomStrategy(Strategy):
                 price=Decimal(str(data['close'].iloc[-1]))
             )
         return None
-    
+
     def should_buy(self, data: pd.DataFrame) -> bool:
         """Your buy logic here."""
         return True  # Replace with actual logic
-    
+
     def should_sell(self, data: pd.DataFrame) -> bool:
         """Your sell logic here."""
         return False  # Replace with actual logic
@@ -410,7 +425,7 @@ class MyCustomStrategy(Strategy):
 ### Adding Technical Indicators
 
 ```python
-def calculate_bollinger_bands(data: pd.Series, window: int = 20, 
+def calculate_bollinger_bands(data: pd.Series, window: int = 20,
                              num_std: float = 2) -> Tuple[pd.Series, pd.Series, pd.Series]:
     """Calculate Bollinger Bands."""
     sma = data.rolling(window=window).mean()
@@ -419,7 +434,7 @@ def calculate_bollinger_bands(data: pd.Series, window: int = 20,
     lower_band = sma - (std * num_std)
     return upper_band, sma, lower_band
 
-def calculate_macd(data: pd.Series, fast: int = 12, slow: int = 26, 
+def calculate_macd(data: pd.Series, fast: int = 12, slow: int = 26,
                    signal: int = 9) -> Tuple[pd.Series, pd.Series, pd.Series]:
     """Calculate MACD indicator."""
     ema_fast = data.ewm(span=fast).mean()
@@ -433,11 +448,13 @@ def calculate_macd(data: pd.Series, fast: int = 12, slow: int = 26,
 ## 📈 Performance Metrics Reference
 
 ### Return Metrics
+
 - **Total Return**: (Final Value - Initial Capital) / Initial Capital
 - **Annualized Return**: Compound annual growth rate
 - **Cumulative Return**: Total percentage gain/loss
 
 ### Risk Metrics
+
 - **Sharpe Ratio**: Risk-adjusted return metric
 - **Sortino Ratio**: Downside risk-adjusted return
 - **Information Ratio**: Excess return per unit of tracking error
@@ -446,6 +463,7 @@ def calculate_macd(data: pd.Series, fast: int = 12, slow: int = 26,
 - **Recovery Factor**: Net Profit / Max Drawdown
 
 ### Trade Statistics
+
 - **Win Rate**: Percentage of profitable trades
 - **Profit Factor**: Gross profit / Gross loss
 - **Average Win/Loss**: Mean profit/loss per trade
@@ -454,6 +472,7 @@ def calculate_macd(data: pd.Series, fast: int = 12, slow: int = 26,
 - **Average Trade Duration**: Mean time in trades
 
 ### Distribution Analysis
+
 - **Skewness**: Asymmetry of return distribution
 - **Kurtosis**: Tail heaviness of return distribution
 - **Exposure Time**: Percentage of time with open positions
@@ -461,6 +480,7 @@ def calculate_macd(data: pd.Series, fast: int = 12, slow: int = 26,
 ## 🎯 Best Practices
 
 ### Strategy Development
+
 1. **Start Simple**: Begin with basic signal logic and iterate
 2. **Test Thoroughly**: Use different time periods and market conditions
 3. **Consider Costs**: Always include realistic transaction costs
@@ -468,6 +488,7 @@ def calculate_macd(data: pd.Series, fast: int = 12, slow: int = 26,
 5. **Monitor Performance**: Track key metrics during development
 
 ### Risk Management
+
 1. **Position Sizing**: Implement proper position sizing rules
 2. **Stop Losses**: Include stop-loss logic in strategies
 3. **Diversification**: Test across multiple assets and timeframes
@@ -475,6 +496,7 @@ def calculate_macd(data: pd.Series, fast: int = 12, slow: int = 26,
 5. **Parameter Sensitivity**: Test strategy robustness to parameter changes
 
 ### Performance Analysis
+
 1. **Multiple Metrics**: Don't rely on a single performance metric
 2. **Walk-Forward Testing**: Test strategies on out-of-sample data
 3. **Benchmark Comparison**: Compare against buy-and-hold returns
@@ -486,22 +508,26 @@ def calculate_macd(data: pd.Series, fast: int = 12, slow: int = 26,
 ### Common Issues
 
 **No Signals Generated**
+
 - Check data length (need sufficient bars for indicators)
 - Verify strategy parameters
 - Ensure proper data format (OHLCV columns)
 
 **Poor Performance**
+
 - Review transaction cost settings
 - Check signal quality and frequency
 - Analyze trade timing and execution
 - Validate indicator calculations
 
 **Memory Issues**
+
 - Use batch processing for large datasets
 - Optimize indicator calculations
 - Consider data sampling for initial testing
 
 **Import Errors**
+
 - Verify all dependencies are installed
 - Check Python path configuration
 - Ensure proper module structure
@@ -516,4 +542,4 @@ def calculate_macd(data: pd.Series, fast: int = 12, slow: int = 26,
 
 ---
 
-*This backtesting system is designed for educational and research purposes. Past performance does not guarantee future results. Always validate strategies with paper trading before live deployment.*
+_This backtesting system is designed for educational and research purposes. Past performance does not guarantee future results. Always validate strategies with paper trading before live deployment._
