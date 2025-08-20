@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from pathlib import Path
+from datetime import datetime
 import warnings
 
 from backtest.models import BacktestResult
@@ -34,12 +35,16 @@ def create_backtest_report(
     benchmark_data: Optional[pd.DataFrame] = None,
     strategy_name: str = 'Strategy',
     output_dir: str = "bt_results",
-    show_plots: bool = False
+    show_plots: bool = False,
+    session_id: Optional[str] = None
 ) -> Dict[str, plt.Figure]:
 
     # NOTE: Create output directory
     output_path = Path(output_dir)
     output_path.mkdir(exist_ok=True)
+    
+    if session_id is None:
+        session_id = f"backtest_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     
     # NOTE: Create figure dictionary
     figures = {}
@@ -53,7 +58,8 @@ def create_backtest_report(
         )
         if fig_perf:
             figures['performance'] = fig_perf
-            fig_perf.savefig(output_path / "performance.png", dpi=300, bbox_inches='tight')
+            date_suffix = session_id.split('_', 1)[1] if '_' in session_id else session_id
+            fig_perf.savefig(output_path / f"performance_{date_suffix}.png", dpi=300, bbox_inches='tight')
     except Exception as e:
         print(f"Error creating performance plot: {e}")
     
@@ -66,7 +72,8 @@ def create_backtest_report(
         )
         if fig_trades:
             figures['trades'] = fig_trades
-            fig_trades.savefig(output_path / "trades.png", dpi=300, bbox_inches='tight')
+            date_suffix = session_id.split('_', 1)[1] if '_' in session_id else session_id
+            fig_trades.savefig(output_path / f"trades_{date_suffix}.png", dpi=300, bbox_inches='tight')
     except Exception as e:
         print(f"Error creating trades plot: {e}")
     
