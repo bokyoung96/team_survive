@@ -1,6 +1,9 @@
 from decimal import Decimal
 from typing import Optional, Dict, Any, List
 import pandas as pd
+from datetime import datetime
+from functools import lru_cache
+from collections import deque
 
 from backtest.types import ActionType, Signal
 from backtest.timeframe import MultiTimeframeData
@@ -59,6 +62,13 @@ class GoldenCrossStrategy(StreamingStrategy):
         }
 
         self._initialize_indicators()
+        # NOTE: Rolling buffers for incremental MTF data management
+        self._mtf_buffers = {
+            "3m": deque(maxlen=360),
+            "30m": deque(maxlen=60), 
+            "1h": deque(maxlen=60)
+        }
+        self._last_cache_timestamp = None
         
     
     def _initialize_indicators(self):
@@ -73,6 +83,33 @@ class GoldenCrossStrategy(StreamingStrategy):
             f"{tf}_{period}": MovingAverage(name=f"ma_{tf}_{period}", length=period)
             for tf, period in [("3m", 360), ("30m", 60), ("1h", 60)]
         }
+
+    @lru_cache(maxsize=50)
+    def _calculate_mtf_ma(self, timestamp_str: str, tf_key: str, period: int) -> Optional[float]:
+        if not self.data or tf_key not in self.data:
+            return None
+
+        df = self.data[tf_key]
+        if len(df) < period:
+            return None
+            
+        timestamp = datetime.fromisoformat(timestamp_str)
+        df = df[df.index <= timestamp]
+        if len(df) < period:
+            return None
+
+        indicator_key = f"{tf_key}_{period}"
+        ma_indicator = self._mtf_ma_indicators.get(indicator_key)
+        if not ma_indicator:
+            return None
+            
+        ma_df = ma_indicator.calculate(df)
+        ma_value = ma_df[f"ma_{tf_key}_{period}"].iloc[-1]
+
+        if pd.isna(ma_value) or ma_value <= 0:
+            return None
+            
+        return float(ma_value)
 
     def update_indicators(self, context: TradingContext) -> None:
         lookback = context.lookback_data
@@ -128,31 +165,16 @@ class GoldenCrossStrategy(StreamingStrategy):
 
         # NOTE: MTF touch tolerance (2%)
         tolerance = Decimal("0.02")
+        timestamp_str = timestamp.isoformat()
         
         for tf_key, period in [("3m", 360), ("30m", 60), ("1h", 60)]:
-            if tf_key not in self.data:
-                continue
-
-            df = self.data[tf_key]
-            if len(df) < period:
+            ma_value = self._calculate_mtf_ma(timestamp_str, tf_key, period)
+            if ma_value is None:
                 continue
                 
-            df = df[df.index <= timestamp]
-            if len(df) < period:
-                continue
-
-            indicator_key = f"{tf_key}_{period}"
-            ma_indicator = self._mtf_ma_indicators.get(indicator_key)
-            if not ma_indicator:
-                continue
-                
-            ma_df = ma_indicator.calculate(df)
-            ma_value = ma_df[f"ma_{tf_key}_{period}"].iloc[-1]
-
-            if not pd.isna(ma_value) and ma_value > 0:
-                diff_pct = abs(current_price - Decimal(str(ma_value))) / Decimal(str(ma_value))
-                if diff_pct <= tolerance:
-                    return True
+            diff_pct = abs(current_price - Decimal(str(ma_value))) / Decimal(str(ma_value))
+            if diff_pct <= tolerance:
+                return True
 
         return False
 
@@ -277,5 +299,11 @@ class GoldenCrossStrategy(StreamingStrategy):
             indicator.reset()
         for indicator in self._mtf_ma_indicators.values():
             indicator.reset()
+        
+        # NOTE: Clear LRU cache and reset buffers
+        self._calculate_mtf_ma.cache_clear()
+        for buffer in self._mtf_buffers.values():
+            buffer.clear()
+        self._last_cache_timestamp = None
 
     
