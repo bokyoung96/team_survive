@@ -243,7 +243,6 @@ class QuantityCalculator:
             required_value = portfolio.get_total_value() * size_percent
             quantity = required_value / fill_price
             
-            # NOTE: Log sizing details
             self.logger.debug(
                 f"Entry #{entry_count}: size_percent={float(size_percent):.4f}, "
                 f"required=${float(required_value):.2f}, available_cash=${float(portfolio.cash):.2f}"
@@ -420,10 +419,11 @@ class OrderExecutor:
         )
         
         signal_period_id = order.metadata.get("signal_period_id", "unknown")
+        entry_timestamp = order.metadata.get("entry_timestamp", "unknown")
         entry_count = order.metadata.get("entry_count", 1)
         self.logger.info(
             f"ENTRY #{entry_count}: Opening new position @ ${fill_price} "
-            f"[Period: {signal_period_id}]"
+            f"[Period: {signal_period_id}, Time: {entry_timestamp}]"
         )
         
         portfolio.add_position(position)
@@ -447,10 +447,25 @@ class OrderExecutor:
             f"[Period: {signal_period_id}]"
         )
         
-        portfolio.close_position(
+        trade_info = {
+            "entry_time": existing_position.entry_time,
+            "entry_price": float(existing_position.entry_price),
+            "quantity": float(existing_position.quantity),
+            "side": existing_position.side.value,
+            "commission": float(existing_position.commission),
+            "slippage": float(existing_position.slippage),
+            "position_metadata": existing_position.metadata
+        }
+        
+        pnl = portfolio.close_position(
             existing_position, fill_price, close_quantity,
             timestamp, costs["fee"], costs["slippage"]
         )
+        
+        trade_info["realized_pnl"] = float(pnl)
+        
+        order.metadata = order.metadata or {}
+        order.metadata.update(trade_info)
         
         if order.quantity > close_quantity:
             remaining = order.quantity - close_quantity
@@ -474,10 +489,11 @@ class OrderExecutor:
     ) -> Tuple[bool, Position]:
         entry_count = order.metadata.get("entry_count", 1)
         signal_period_id = order.metadata.get("signal_period_id", "unknown")
+        entry_timestamp = order.metadata.get("entry_timestamp", "unknown")
         
         self.logger.info(
             f"ENTRY #{entry_count}: Adding to position @ ${fill_price} "
-            f"[Period: {signal_period_id}]"
+            f"[Period: {signal_period_id}, Time: {entry_timestamp}]"
         )
         
         open_qty = existing_position.open_quantity

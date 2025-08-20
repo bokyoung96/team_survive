@@ -33,10 +33,12 @@ class BacktestEngine:
     def __init__(
         self,
         transaction_cost: Optional[TransactionCost] = None,
-        analyzer: Optional[PerformanceAnalyzer] = None
+        analyzer: Optional[PerformanceAnalyzer] = None,
+        max_trades_limit: int = 5000
     ):
         self.transaction_cost = transaction_cost or TransactionCost()
         self.analyzer = analyzer or PerformanceAnalyzer()
+        self.max_trades_limit = max_trades_limit
         self.logger = get_logger(__name__)
         
         self.order_creator = OrderCreator()
@@ -44,6 +46,7 @@ class BacktestEngine:
         self.order_executor = OrderExecutor(self.transaction_cost)
         self.signal_processor = SignalProcessor(self.order_creator)
 
+    
     
     def _validate_inputs(
         self,
@@ -172,39 +175,29 @@ class BacktestEngine:
         symbol: str,
         warmup_periods: int = 50
     ) -> BacktestResult:
-        """
-        Run backtest with sequential bar processing
-        
-        Args:
-            strategy: Strategy instance
-            ohlcv_data: OHLCV DataFrame with datetime index
-            initial_capital: Starting capital
-            symbol: Trading symbol
-            warmup_periods: Number of periods for indicator warmup
-        """
         self._validate_inputs(ohlcv_data, initial_capital, symbol, strategy)
         
-        # Initialize portfolio and data structures
         portfolio = Portfolio(initial_capital=initial_capital)
         equity_curve: List[Dict[str, Any]] = []
         trades: List[Dict[str, Any]] = []
-        orders: List[Any] = []
         
-        # Reset strategy state
+        
         strategy.reset_state()
         
-        # Run backtest loop
+        # NOTE: Run backtest loop
         self._run_loop(
-            strategy, ohlcv_data, symbol, portfolio, 
-            equity_curve, trades, orders, warmup_periods
+            strategy, 
+            ohlcv_data, 
+            symbol, 
+            portfolio, 
+            equity_curve, 
+            trades, 
+            warmup_periods
         )
         
-        # Close any remaining positions
         self._close_final_position(portfolio, symbol, ohlcv_data, trades)
         
-        return self._build_result(
-            portfolio, equity_curve, trades, symbol, initial_capital, strategy
-        )
+        return self._build_result(portfolio, equity_curve, trades, symbol, initial_capital, strategy)
     
     def _run_loop(
         self,
@@ -214,26 +207,25 @@ class BacktestEngine:
         portfolio: Portfolio,
         equity_curve: List[Dict[str, Any]],
         trades: List[Dict[str, Any]],
-        orders: List[Any],
         warmup_periods: int
-    ) -> None:
-        """Run the main backtest loop"""
-        
+    ) -> None:        
         total_bars = len(ohlcv_data)
         
-        # Optimize progress bar updates - update every 100 iterations instead of every iteration
-        update_frequency = max(100, total_bars // 1000)  # Update every 100 bars or every 0.1% of progress
+        # NOTE: Optimize progress bar updates
+        update_frequency = max(100, total_bars // 1000)
+        
+        # NOTE: Prevent multiple signals in same bar
+        last_signal_timestamp = None
+        last_equity_date = None
         
         with tqdm(total=total_bars, desc="Running Backtest") as pbar:
             for i, (timestamp, bar) in enumerate(ohlcv_data.iterrows()):
                 
-                # Get current position
                 current_position = portfolio.get_position(symbol)
                 
-                # Create limited lookback data
                 lookback_data = strategy._get_lookback_data(ohlcv_data, i)
                 
-                # Create trading context
+                # NOTE: Create trading context
                 context = TradingContext(
                     portfolio=portfolio,
                     position=current_position,
@@ -244,36 +236,45 @@ class BacktestEngine:
                     symbol=symbol
                 )
                 
-                # Update strategy indicators
                 strategy.update_indicators(context)
                 
-                # Skip warmup period
                 if i < warmup_periods:
-                    self._update_equity(context, equity_curve)
+                    current_date = timestamp.date()
+                    if last_equity_date != current_date:
+                        self._update_equity(context, equity_curve)
+                        last_equity_date = current_date
                     if i % update_frequency == 0:
                         pbar.update(update_frequency)
                     continue
                 
-                # Process current bar
                 signal = strategy.process_bar(context)
                 
-                # Process signal if generated
+                # NOTE: Process signal if generated
                 if signal:
-                    # Record signal in strategy history
-                    strategy.record_signal(context.timestamp, signal)
-                    
-                    self._process_signal(
-                        signal, context, orders, trades, strategy
-                    )
+                    if last_signal_timestamp == timestamp:
+                        self.logger.warning(
+                            f"Multiple signals in same bar blocked at {timestamp}. "
+                            f"Only first signal processed."
+                        )
+                    else:
+                        strategy.record_signal(context.timestamp, signal)
+                        
+                        self._process_signal(
+                            signal, context, trades, strategy
+                        )
+                        
+                        context.position = portfolio.get_position(symbol)
+                            
+                        last_signal_timestamp = timestamp
                 
-                # Update equity curve
-                self._update_equity(context, equity_curve)
+                current_date = timestamp.date()
+                if last_equity_date != current_date or signal:
+                    self._update_equity(context, equity_curve)
+                    last_equity_date = current_date
                 
-                # Update progress bar less frequently
                 if i % update_frequency == 0:
                     pbar.update(update_frequency)
             
-            # Ensure progress bar reaches 100%
             remaining = total_bars - (total_bars // update_frequency) * update_frequency
             if remaining > 0:
                 pbar.update(remaining)
@@ -282,13 +283,10 @@ class BacktestEngine:
         self,
         signal,
         context: TradingContext,
-        orders: List[Any],
         trades: List[Dict[str, Any]],
         strategy: Any = None
-    ) -> None:
-        """Process signal and execute orders"""
-        
-        # Create signal context
+    ) -> None:        
+        # NOTE: Create signal context
         signal_context = SignalContext(
             signal=signal,
             portfolio=context.portfolio,
@@ -298,23 +296,19 @@ class BacktestEngine:
             symbol=context.symbol
         )
         
-        # Process signal to get orders
+        # NOTE: Process signal to get orders
         generated_orders = self.signal_processor.process_signal(signal_context)
         
-        # Execute each order
+        # NOTE: Execute each order
         for order in generated_orders:
             success, position = self.order_executor.execute_order(
                 order, context.current_bar, context.portfolio, context.timestamp
             )
             
             if success:
-                orders.append(order)
-                
-                # Record trade if this was an exit order
                 if order.side == ActionType.SELL:
                     self._record_completed_trades(order, context.portfolio, trades, strategy)
                     
-                # Log execution
                 self.logger.info(
                     f"Executed {order.side.value} order: "
                     f"{order.quantity} @ {order.filled_price}"
@@ -325,7 +319,6 @@ class BacktestEngine:
         context: TradingContext, 
         equity_curve: List[Dict[str, Any]]
     ) -> None:
-        """Update equity curve"""
         current_prices = {context.symbol: context.get_current_price()}
         metrics = context.portfolio.calculate_metrics(current_prices)
         
@@ -336,7 +329,7 @@ class BacktestEngine:
             "position_count": metrics["position_count"],
             "realized_pnl": float(metrics["realized_pnl"]),
             "unrealized_pnl": float(metrics["unrealized_pnl"]),
-            "drawdown": 0.0  # Will be calculated later
+            "drawdown": 0.0
         })
     
     def _record_completed_trades(
@@ -346,36 +339,30 @@ class BacktestEngine:
         trades: List[Dict[str, Any]],
         strategy: Any = None
     ) -> None:
-        """Record any trades that were completed by this exit order"""
-        # Check recently closed positions that match this order
-        for closed_position in portfolio.closed_positions:
-            # Only record if this position was closed by this specific order
-            # (check if exit_time matches order timestamp)
-            if (closed_position.exit_time == order.timestamp and 
-                closed_position.symbol == order.symbol):
-                
-                trade_data = {
-                    "entry_time": closed_position.entry_time,
-                    "exit_time": order.timestamp,
-                    "entry_price": float(closed_position.entry_price),
-                    "exit_price": float(order.filled_price),
-                    "quantity": float(closed_position.quantity),
-                    "side": closed_position.side.value,
-                    "pnl": float(closed_position.realized_pnl),
-                    "commission": float(closed_position.commission),
-                    "slippage": float(closed_position.slippage),
-                    "metadata": closed_position.metadata
-                }
-                trades.append(trade_data)
-                
-                # Record trade in strategy history
-                if strategy and hasattr(strategy, 'record_trade'):
-                    strategy.record_trade(order.timestamp, trade_data)
-                
-                # Log the trade recording
-                self.logger.info(
-                    f"Recorded trade: {closed_position.side.value} "
-                    f"{closed_position.quantity} @ ${closed_position.entry_price} -> "
-                    f"${order.filled_price}, PnL: ${closed_position.realized_pnl}"
-                )
-                break  # Only record once per order
+        # NOTE: Trade info stored in order metadata by executor
+        if order.metadata and "entry_time" in order.metadata:
+            trade_data = {
+                "entry_time": order.metadata["entry_time"],
+                "exit_time": order.timestamp,
+                "entry_price": order.metadata["entry_price"],
+                "exit_price": float(order.filled_price),
+                "quantity": order.metadata["quantity"],
+                "side": order.metadata["side"],
+                "pnl": order.metadata["realized_pnl"],
+                "commission": order.metadata["commission"],
+                "slippage": order.metadata["slippage"],
+                "metadata": order.metadata.get("position_metadata", {})
+            }
+            trades.append(trade_data)
+            
+            if len(trades) > self.max_trades_limit:
+                trades.pop(0)
+            
+            if strategy and hasattr(strategy, 'record_trade'):
+                strategy.record_trade(order.timestamp, trade_data)
+            
+            self.logger.info(
+                f"Recorded trade: {trade_data['side']} "
+                f"{trade_data['quantity']} @ ${trade_data['entry_price']} -> "
+                f"${order.filled_price}, PnL: ${trade_data['pnl']}"
+            )

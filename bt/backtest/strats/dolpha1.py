@@ -30,6 +30,15 @@ class GoldenCrossStrategy(StreamingStrategy):
     - Position sizing with scaling factor
     - State management for entry tracking
     """
+    
+    # NOTE: Strategy parameters
+    MTF_KEYS = ("3m", "30m", "1h")
+    MTF_PERIODS = {"3m": 360, "30m": 60, "1h": 60}
+    MTF_BUFFER_SIZES = {"3m": 360, "30m": 60, "1h": 60}
+    DAILY_MA_PERIODS = (112, 224, 448)
+    TOUCH_TOLERANCE = 0.02
+    STOP_LOSS_PCT = 0.95
+    
     def __init__(
         self,
         data: Optional['MultiTimeframeData'] = None,
@@ -47,12 +56,9 @@ class GoldenCrossStrategy(StreamingStrategy):
         self.data = data
         self._logger = get_logger(__name__)
 
-        # NOTE: Strategy parameters
+        # NOTE: Strategy parameters with defaults
         self.parameters = {
-            "ma_periods": ma_periods or {
-                "daily": [112, 224, 448],
-                "3min": [360], "30min": [60], "60min": [60]
-            },
+            "ma_periods": ma_periods or {"daily": list(self.DAILY_MA_PERIODS)},
             "position_sizing": position_sizing or {
                 "initial_size": 0.01, "scale_factor": 1.4, "max_entries": 10
             },
@@ -61,15 +67,19 @@ class GoldenCrossStrategy(StreamingStrategy):
             }
         }
 
+        self._initialize_buffers()
         self._initialize_indicators()
-        # NOTE: Rolling buffers for incremental MTF data management
+    
+    def _initialize_buffers(self):
         self._mtf_buffers = {
-            "3m": deque(maxlen=360),
-            "30m": deque(maxlen=60), 
-            "1h": deque(maxlen=60)
+            key: deque(maxlen=size) 
+            for key, size in self.MTF_BUFFER_SIZES.items()
         }
-        self._last_cache_timestamp = None
         
+        self._mtf_last_idx = {key: -1 for key in self.MTF_KEYS}
+        
+        max_daily_period = max(self.parameters["ma_periods"]["daily"])
+        self._daily_price_buffer = deque(maxlen=max_daily_period)
     
     def _initialize_indicators(self):
         # NOTE: Daily MA indicators
@@ -81,58 +91,96 @@ class GoldenCrossStrategy(StreamingStrategy):
         # NOTE: MTF MA indicators
         self._mtf_ma_indicators = {
             f"{tf}_{period}": MovingAverage(name=f"ma_{tf}_{period}", length=period)
-            for tf, period in [("3m", 360), ("30m", 60), ("1h", 60)]
+            for tf, period in self.MTF_PERIODS.items()
         }
 
     @lru_cache(maxsize=50)
     def _calculate_mtf_ma(self, timestamp_str: str, tf_key: str, period: int) -> Optional[float]:
-        if not self.data or tf_key not in self.data:
-            return None
-
-        df = self.data[tf_key]
-        if len(df) < period:
+        if tf_key not in self._mtf_buffers:
             return None
             
-        timestamp = datetime.fromisoformat(timestamp_str)
-        df = df[df.index <= timestamp]
-        if len(df) < period:
-            return None
-
-        indicator_key = f"{tf_key}_{period}"
-        ma_indicator = self._mtf_ma_indicators.get(indicator_key)
-        if not ma_indicator:
+        buffer = self._mtf_buffers[tf_key]
+        if len(buffer) < period:
             return None
             
-        ma_df = ma_indicator.calculate(df)
-        ma_value = ma_df[f"ma_{tf_key}_{period}"].iloc[-1]
-
-        if pd.isna(ma_value) or ma_value <= 0:
+        recent_prices = list(buffer)[-period:]
+        ma_value = sum(recent_prices) / len(recent_prices)
+        
+        if ma_value <= 0:
             return None
             
         return float(ma_value)
 
+    def _update_mtf_buffers(self, timestamp: datetime, price: Decimal) -> None:
+        if not self.data:
+            return
+        
+        for tf_key in self.MTF_KEYS:
+            if tf_key not in self.data:
+                continue
+            df = self.data[tf_key]
+            
+            idx = self._get_next_mtf_index(df, tf_key, timestamp)
+            if idx is None:
+                continue
+            
+            latest_price = float(df.iloc[idx]['close'])
+            buffer = self._mtf_buffers[tf_key]
+            
+            if not buffer or buffer[-1] != latest_price:
+                buffer.append(latest_price)
+            
+            self._mtf_last_idx[tf_key] = idx
+    
+    def _get_next_mtf_index(self, df: pd.DataFrame, tf_key: str, timestamp: datetime) -> Optional[int]:
+        last_idx = self._mtf_last_idx[tf_key]
+        df_len = len(df)
+        
+        if 0 <= last_idx < df_len - 1:
+            if df.index[last_idx + 1] <= timestamp:
+                idx = last_idx + 1
+                while idx < df_len and df.index[idx] <= timestamp:
+                    idx += 1
+                return idx - 1
+            return None
+        
+        if last_idx == -1:
+            try:
+                return df.index.get_indexer([timestamp], method='ffill')[0]
+            except:
+                return None
+        return None
+
     def update_indicators(self, context: TradingContext) -> None:
-        lookback = context.lookback_data
-        
-        for period, indicator in self._daily_ma_indicators.items():
-            ma_df = indicator.calculate(lookback)
-            if not ma_df.empty and not ma_df[indicator.name].isna().iloc[-1]:
-                self.set_indicator_value(f"ma_{period}", ma_df[indicator.name].iloc[-1])
-        
-        # NOTE: Update state variables
         current_price = context.get_current_price()
-        last_high = self.get_state("last_high", current_price)
-        if current_price > last_high:
+        current_price_float = float(current_price)
+        
+        self._daily_price_buffer.append(current_price_float)
+        self._update_mtf_buffers(context.timestamp, current_price)
+        
+        self._calculate_daily_mas()
+        
+        if current_price > self.get_state("last_high", current_price):
             self.set_state("last_high", current_price)
+    
+    def _calculate_daily_mas(self) -> None:
+        buffer_len = len(self._daily_price_buffer)
+        if buffer_len < min(self.parameters["ma_periods"]["daily"]):
+            return
+        
+        price_list = list(self._daily_price_buffer)
+        for period in self.parameters["ma_periods"]["daily"]:
+            if buffer_len >= period:
+                ma_value = sum(price_list[-period:]) / period
+                self.set_indicator_value(f"ma_{period}", ma_value)
         
     def process_bar(self, context: TradingContext) -> Optional[Signal]:
-        current_price = context.get_current_price()
-        
         if not self._has_sufficient_data(context):
             return None
         
-        if context.position and context.position.is_open:
-            # NOTE: Check exit conditions
+        position = context.position
+        if position and position.is_open:
+            # NOTE: Check exit conditions first
             exit_signal = self._check_exit_conditions(context)
             if exit_signal:
                 return exit_signal
@@ -159,38 +207,30 @@ class GoldenCrossStrategy(StreamingStrategy):
         
         return ma_values[0] > ma_values[1] > ma_values[2]
 
-    def check_mtf_touch(self, current_price: Decimal, timestamp) -> bool:
+    def check_mtf_touch(self, current_price: Decimal, timestamp: datetime) -> bool:
         if not self.data:
             return False
 
-        # NOTE: MTF touch tolerance (2%)
-        tolerance = Decimal("0.02")
+        price_float = float(current_price)
+        lower_bound = price_float * (1 - self.TOUCH_TOLERANCE)
+        upper_bound = price_float * (1 + self.TOUCH_TOLERANCE)
         timestamp_str = timestamp.isoformat()
         
-        for tf_key, period in [("3m", 360), ("30m", 60), ("1h", 60)]:
-            ma_value = self._calculate_mtf_ma(timestamp_str, tf_key, period)
-            if ma_value is None:
-                continue
-                
-            diff_pct = abs(current_price - Decimal(str(ma_value))) / Decimal(str(ma_value))
-            if diff_pct <= tolerance:
-                return True
-
-        return False
+        for tf, period in self.MTF_PERIODS.items():
+            ma_value = self._calculate_mtf_ma(timestamp_str, tf, period)
+            if ma_value is None or not (lower_bound <= ma_value <= upper_bound):
+                return False
+        
+        return True
 
     def _calculate_exit_levels(self, entry_price: Decimal, last_high: Decimal) -> Dict[str, Decimal]:
-        # NOTE: Fibonacci levels - 0.382 (38.2%) / 0.5 (50%)
         price_range = last_high - entry_price
-        tp1_price = entry_price + (price_range * Decimal(str(self.parameters["exit_levels"]["tp1_level"])))
-        tp2_price = entry_price + (price_range * Decimal(str(self.parameters["exit_levels"]["tp2_level"])))
-        
-        # NOTE: SL 5% below entry price
-        stop_loss_price = entry_price * Decimal("0.95")
+        exit_params = self.parameters["exit_levels"]
         
         return {
-            "tp1": tp1_price,
-            "tp2": tp2_price,
-            "stop_loss": stop_loss_price
+            "tp1": entry_price + (price_range * Decimal(str(exit_params["tp1_level"]))),
+            "tp2": entry_price + (price_range * Decimal(str(exit_params["tp2_level"]))),
+            "stop_loss": entry_price * Decimal(str(self.STOP_LOSS_PCT))
         }
 
 
@@ -206,31 +246,33 @@ class GoldenCrossStrategy(StreamingStrategy):
             f"TP1={exit_levels['tp1']}, TP2={exit_levels['tp2']}, SL={exit_levels['stop_loss']}"
         )
 
+        exit_signal = None
         if current_price >= exit_levels["tp2"]:
             self._logger.info(f"TP2 HIT: {current_price} >= {exit_levels['tp2']}")
-            return Signal(
+            exit_signal = Signal(
                 type=ActionType.CLOSE, strength=1.0, price=current_price,
                 metadata={"reason": "take_profit_2"}
             )
         elif current_price >= exit_levels["tp1"]:
             self._logger.info(f"TP1 HIT: {current_price} >= {exit_levels['tp1']}")
-            return Signal(
+            exit_signal = Signal(
                 type=ActionType.CLOSE, strength=0.5, price=current_price,
                 quantity=position.open_quantity * Decimal("0.5"),
                 metadata={"reason": "take_profit_1"}
             )
         elif current_price <= exit_levels["stop_loss"]:
             self._logger.info(f"SL HIT: {current_price} <= {exit_levels['stop_loss']}")
-            return Signal(
+            exit_signal = Signal(
                 type=ActionType.CLOSE, strength=1.0, price=current_price,
                 metadata={"reason": "stop_loss"}
             )
         
-        return None
+        return exit_signal
 
     def _check_martingale_entry(self, context: TradingContext) -> Optional[Signal]:
         position = context.position
         current_price = context.get_current_price()
+        current_timestamp = context.timestamp
         
         max_entries = self.parameters["position_sizing"]["max_entries"]
         current_entries = position.metadata.get("entry_count", 1)
@@ -256,12 +298,15 @@ class GoldenCrossStrategy(StreamingStrategy):
             f"{context.timestamp.strftime('%Y%m%d_%H%M%S')}"
         )
         
-        self._logger.info(f"MARTINGALE SIGNAL GENERATED: Entry #{current_entries + 1}")
+        self._logger.info(
+            f"MARTINGALE SIGNAL GENERATED: Entry #{current_entries + 1} at {current_timestamp}"
+        )
         return Signal(
             type=ActionType.BUY, strength=0.8, price=current_price,
             metadata={
                 "entry_count": current_entries + 1,
                 "signal_period_id": signal_period_id,
+                "entry_timestamp": current_timestamp.strftime('%Y%m%d_%H%M%S'),
                 "golden_cross": True,
                 "multi_timeframe_touch": True,
                 "position_sizing": self.parameters["position_sizing"],
@@ -271,6 +316,7 @@ class GoldenCrossStrategy(StreamingStrategy):
     
     def _check_new_entry(self, context: TradingContext) -> Optional[Signal]:
         current_price = context.get_current_price()
+        current_timestamp = context.timestamp
         
         if not self._check_golden_cross(context):
             return None
@@ -281,12 +327,13 @@ class GoldenCrossStrategy(StreamingStrategy):
         # NOTE: Generate new signal period ID
         signal_period_id = f"{context.timestamp.strftime('%Y%m%d_%H%M%S')}"
         
-        self._logger.info(f"NEW ENTRY SIGNAL: {signal_period_id}")
+        self._logger.info(f"NEW ENTRY SIGNAL: {signal_period_id} at {current_timestamp}")
         return Signal(
             type=ActionType.BUY, strength=0.8, price=current_price,
             metadata={
                 "entry_count": 1,
                 "signal_period_id": signal_period_id,
+                "entry_timestamp": current_timestamp.strftime('%Y%m%d_%H%M%S'),
                 "golden_cross": True,
                 "multi_timeframe_touch": True,
                 "position_sizing": self.parameters["position_sizing"]
@@ -304,6 +351,10 @@ class GoldenCrossStrategy(StreamingStrategy):
         self._calculate_mtf_ma.cache_clear()
         for buffer in self._mtf_buffers.values():
             buffer.clear()
-        self._last_cache_timestamp = None
+        # NOTE: Reset MTF indices
+        for tf_key in self._mtf_last_idx:
+            self._mtf_last_idx[tf_key] = -1
+        # NOTE: Reset daily buffers
+        self._daily_price_buffer.clear()
 
     
