@@ -78,8 +78,3 @@ def set_log_level(level: str):
 def enable_file_logging(filename: Optional[str] = None, level: str = "DEBUG"):
     _logger_inst.add_file_handler(filename, level)
 
-
-ENGINE_LOGGER = get_logger("engine")
-STRATEGY_LOGGER = get_logger("strategy") 
-EXECUTOR_LOGGER = get_logger("executor")
-PERFORMANCE_LOGGER = get_logger("performance")

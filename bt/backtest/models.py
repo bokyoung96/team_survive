@@ -166,6 +166,7 @@ class Portfolio:
     transaction_history: List[Dict[str, Any]] = field(default_factory=list)
     
     _last_metrics: Optional[Dict[str, Any]] = field(default=None, init=False)
+    _last_metrics_prices: Optional[Dict[str, Decimal]] = field(default=None, init=False)
     
     def __post_init__(self):
         if self.cash is None:
@@ -226,6 +227,8 @@ class Portfolio:
         else:
             raise ValueError(f"Invalid position side: {position.side}")
         
+        self._last_metrics = None
+        self._last_metrics_prices = None
     
     def close_position(
         self,
@@ -249,10 +252,22 @@ class Portfolio:
             
         if not position.is_open:
             self.closed_positions.append(position)
+        
+        self._last_metrics = None
+        self._last_metrics_prices = None
             
         return pnl
     
     def calculate_metrics(self, current_prices: Dict[str, Decimal]) -> Dict[str, Any]:
+        if (self._last_metrics is not None and 
+            self._last_metrics_prices is not None and
+            self._last_metrics_prices == current_prices and
+            self._last_metrics.get("closed_trades") == len(self.closed_positions)):
+            cached_metrics = self._last_metrics.copy()
+            cached_metrics["cash"] = self.cash
+            cached_metrics["position_count"] = self.position_count
+            return cached_metrics
+        
         total_value = self.cash
         unrealized_pnl = Decimal("0")
         
@@ -266,7 +281,7 @@ class Portfolio:
         realized_pnl = sum(pos.realized_pnl for pos in self.closed_positions)
         total_pnl = realized_pnl + unrealized_pnl
         
-        return {
+        metrics = {
             "cash": self.cash,
             "total_value": total_value,
             "realized_pnl": realized_pnl,
@@ -276,6 +291,11 @@ class Portfolio:
             "position_count": self.position_count,
             "closed_trades": len(self.closed_positions)
         }
+        
+        self._last_metrics = metrics.copy()
+        self._last_metrics_prices = current_prices.copy()
+        
+        return metrics
 
 
 @dataclass

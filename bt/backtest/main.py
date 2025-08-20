@@ -47,7 +47,7 @@ def main():
     print(f"Running real-time backtest...")
     result = engine.run_backtest(
         strategy=strategy,
-        ohlcv_data=data["1d"],
+        ohlcv_data=data["3m"],
         initial_capital=Decimal("100000000"),
         symbol=f"{symbol.base}{symbol.quote}"
     )
@@ -64,7 +64,7 @@ def main():
     try:
         create_backtest_report(
             result=result,
-            benchmark_data=data["1d"],
+            benchmark_data=data["3m"],
             strategy_name="GoldenCrossStrategy",
             output_dir="bt_results",
             show_plots=False

@@ -78,7 +78,6 @@ class MovingAverage:
         return pd.DataFrame({self.name: ma})
     
     def reset(self) -> None:
-        """Reset indicator state for new calculations"""
         pass
 
 
