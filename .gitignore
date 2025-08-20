@@ -1,3 +1,6 @@
+# Ignore batch files
+*.bat
+
 # Ignore results
 bt_results/
 
