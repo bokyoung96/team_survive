@@ -100,7 +100,6 @@ class PerformanceAnalyzer:
         
         running_max = equity.expanding().max()
         
-        # Avoid division by zero
         drawdown = pd.Series(index=equity.index, dtype=float)
         mask = running_max != 0
         drawdown[mask] = (equity[mask] - running_max[mask]) / running_max[mask]
