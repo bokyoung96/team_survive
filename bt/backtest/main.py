@@ -2,6 +2,7 @@ from decimal import Decimal
 import sys
 from pathlib import Path
 from datetime import datetime
+import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -24,7 +25,7 @@ def main():
     loader = DataLoader(factory)
     
     symbol = Symbol.from_string("BTC/USDT:USDT")
-    start_date = KST.localize(datetime(2020, 1, 1))
+    start_date = KST.localize(datetime(2023, 1, 1))
     end_date = KST.localize(datetime(2025, 8, 18))
     date_range = TimeRange(start_date, end_date)
     

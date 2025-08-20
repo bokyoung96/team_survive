@@ -161,12 +161,11 @@ class Portfolio:
     currency: str = "USDT"
     cash: Optional[Decimal] = None
     positions: Dict[str, List[Position]] = field(default_factory=dict)
-    orders: List[Order] = field(default_factory=list)
-    closed_positions: List[Position] = field(default_factory=list)
-    transaction_history: List[Dict[str, Any]] = field(default_factory=list)
     
     _last_metrics: Optional[Dict[str, Any]] = field(default=None, init=False)
     _last_metrics_prices: Optional[Dict[str, Decimal]] = field(default=None, init=False)
+    _total_realized_pnl: Decimal = field(default=Decimal("0"), init=False)
+    _total_closed_trades: int = field(default=0, init=False)
     
     def __post_init__(self):
         if self.cash is None:
@@ -251,7 +250,15 @@ class Portfolio:
             raise ValueError(f"Invalid position side: {position.side}")
             
         if not position.is_open:
-            self.closed_positions.append(position)
+            self._total_realized_pnl += position.realized_pnl
+            self._total_closed_trades += 1
+            
+            if position.symbol in self.positions:
+                self.positions[position.symbol] = [
+                    p for p in self.positions[position.symbol] if p.is_open
+                ]
+                if not self.positions[position.symbol]:
+                    del self.positions[position.symbol]
         
         self._last_metrics = None
         self._last_metrics_prices = None
@@ -262,7 +269,7 @@ class Portfolio:
         if (self._last_metrics is not None and 
             self._last_metrics_prices is not None and
             self._last_metrics_prices == current_prices and
-            self._last_metrics.get("closed_trades") == len(self.closed_positions)):
+            self._last_metrics.get("closed_trades") == self._total_closed_trades):
             cached_metrics = self._last_metrics.copy()
             cached_metrics["cash"] = self.cash
             cached_metrics["position_count"] = self.position_count
@@ -277,8 +284,8 @@ class Portfolio:
                 pnl = pos.calculate_pnl(current_prices[symbol])
                 unrealized_pnl += pnl["unrealized_pnl"]
                 total_value += pos.open_quantity * current_prices.get(symbol, pos.entry_price)
-        
-        realized_pnl = sum(pos.realized_pnl for pos in self.closed_positions)
+                
+        realized_pnl = self._total_realized_pnl
         total_pnl = realized_pnl + unrealized_pnl
         
         metrics = {
@@ -289,7 +296,7 @@ class Portfolio:
             "total_pnl": total_pnl,
             "return": (total_value - self.initial_capital) / self.initial_capital,
             "position_count": self.position_count,
-            "closed_trades": len(self.closed_positions)
+            "closed_trades": self._total_closed_trades
         }
         
         self._last_metrics = metrics.copy()
