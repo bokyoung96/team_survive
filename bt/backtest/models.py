@@ -208,6 +208,10 @@ class Portfolio:
     def position_count(self) -> int:
         return len(self.open_positions)
     
+    @property
+    def total_realized_pnl(self) -> Decimal:
+        return self._total_realized_pnl
+    
     def get_position(self, symbol: str) -> Optional[Position]:
         if symbol in self.positions:
             open_positions = [p for p in self.positions[symbol] if p.is_open]

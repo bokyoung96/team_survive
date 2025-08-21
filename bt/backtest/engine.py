@@ -39,6 +39,7 @@ class BacktestEngine:
         self.transaction_cost = transaction_cost or TransactionCost()
         self.analyzer = analyzer or PerformanceAnalyzer()
         self.max_trades_limit = max_trades_limit
+        self.storage = None
         self.logger = get_logger(__name__)
         
         self.order_creator = OrderCreator()
@@ -173,9 +174,13 @@ class BacktestEngine:
         ohlcv_data: pd.DataFrame,
         initial_capital: Decimal,
         symbol: str,
-        warmup_periods: int = 50
+        warmup_periods: int = 50,
+        storage=None
     ) -> BacktestResult:
         self._validate_inputs(ohlcv_data, initial_capital, symbol, strategy)
+        
+        # NOTE: Set trade storage if provided
+        self.storage = storage
         
         portfolio = Portfolio(initial_capital=initial_capital)
         equity_curve: List[Dict[str, Any]] = []
@@ -357,6 +362,22 @@ class BacktestEngine:
             
             if len(trades) > self.max_trades_limit:
                 trades.pop(0)
+            
+            # NOTE: Record all trades to storage if available
+            if self.storage:
+                from backtest.storage import Trade
+                storage_trade = Trade(
+                    timestamp=int(order.timestamp.timestamp() * 1000),
+                    symbol=order.symbol,
+                    side=order.metadata["side"],
+                    price=float(order.metadata["entry_price"]),
+                    quantity=float(order.metadata["quantity"]),
+                    pnl=float(order.metadata["realized_pnl"]),
+                    cumulative_pnl=float(portfolio.total_realized_pnl),
+                    position=float(order.metadata["quantity"]),
+                    trade_id=len(trades)
+                )
+                self.storage.record_trade(storage_trade)
             
             if strategy and hasattr(strategy, 'record_trade'):
                 strategy.record_trade(order.timestamp, trade_data)
