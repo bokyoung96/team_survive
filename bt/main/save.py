@@ -11,7 +11,7 @@ def load_trades(session_id: str, fallback_df: pd.DataFrame = None) -> pd.DataFra
         storage = TradeStorage(base_dir="bt_results")
         trades = storage.load_trades(session_id)
         if not trades:
-            return fallback_df or pd.DataFrame()
+            return fallback_df if fallback_df is not None else pd.DataFrame()
         
         data = []
         for i in range(0, len(trades), 2):
@@ -32,7 +32,7 @@ def load_trades(session_id: str, fallback_df: pd.DataFrame = None) -> pd.DataFra
         return df
     except Exception as e:
         print(f"Storage load error: {e}")
-        return fallback_df or pd.DataFrame()
+        return fallback_df if fallback_df is not None else pd.DataFrame()
 
 
 def get_periods_per_year(equity_curve: pd.DataFrame) -> int:
