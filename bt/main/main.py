@@ -40,16 +40,16 @@ def main(strategy_choice=2):
                 .add(symbol, TimeFrame.H1, date_range))
         strategy = GoldenCrossStrategy(data=data)
         strategy_name = "GoldenCrossStrategy"
-    elif choice == "2":
+    else:
         data = MultiTimeframeData(loader).add(symbol, TimeFrame.D1, date_range)
         strategy = GoldenCrossOnlyStrategy()
         strategy_name = "GoldenCrossOnlyStrategy"
     
     engine = BacktestEngine(
         transaction_cost=TransactionCost(
-            maker_fee=Decimal("0.00001"),
-            taker_fee=Decimal("0.00001"),
-            slippage=Decimal("0.00001")
+            maker_fee=Decimal("0.0001"),
+            taker_fee=Decimal("0.0001"),
+            slippage=Decimal("0.0001")
         )
     )
     
@@ -57,10 +57,14 @@ def main(strategy_choice=2):
     session_id = f"backtest_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     storage.initialize_session(session_id)
     
+    if choice == "1":
+        ohlcv_data = data["3m"]
+    else:
+        ohlcv_data = data["1d"]
     
     result = engine.run_backtest(
         strategy=strategy,
-        ohlcv_data=data["1d"],
+        ohlcv_data=ohlcv_data,
         initial_capital=Decimal("100000000"),
         symbol=f"{symbol.base}{symbol.quote}",
         storage=storage
@@ -74,7 +78,7 @@ def main(strategy_choice=2):
     
     generate_plots(
         result=result,
-        benchmark_data=data["1d"],
+        benchmark_data=ohlcv_data,
         strategy_name=strategy_name,
         output_dir="bt_results",
         show_plots=False,
