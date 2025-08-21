@@ -8,6 +8,7 @@ from datetime import datetime
 import warnings
 
 from backtest.models import BacktestResult
+from backtest.storage import TradeStorage
 
 warnings.filterwarnings('ignore')
 
@@ -30,7 +31,7 @@ COLORS = {
 }
 
 
-def create_backtest_report(
+def generate_plots(
     result: BacktestResult,
     benchmark_data: Optional[pd.DataFrame] = None,
     strategy_name: str = 'Strategy',
@@ -40,13 +41,15 @@ def create_backtest_report(
 ) -> Dict[str, plt.Figure]:
 
     # NOTE: Create output directory
-    output_path = Path(output_dir)
-    output_path.mkdir(exist_ok=True)
+    base_output_path = Path(output_dir)
+    base_output_path.mkdir(exist_ok=True)
     
     if session_id is None:
         session_id = f"backtest_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     
-    # NOTE: Create figure dictionary
+    output_path = base_output_path / session_id
+    output_path.mkdir(exist_ok=True)
+    
     figures = {}
     
     # NOTE: Create performance plot
@@ -65,9 +68,35 @@ def create_backtest_report(
     
     # NOTE: Create trades plot
     try:
+        all_trades_df = result.trades
+        if session_id:
+            try:
+                storage = TradeStorage(base_dir=output_dir)
+                all_trades = storage.load_trades(session_id)
+                if all_trades:
+                    trades_data = []
+                    for i in range(0, len(all_trades), 2):
+                        if i + 1 < len(all_trades):
+                            entry = all_trades[i]
+                            exit_trade = all_trades[i + 1]
+                            trades_data.append({
+                                'entry_time': pd.Timestamp(entry.timestamp, unit='ms'),
+                                'exit_time': pd.Timestamp(exit_trade.timestamp, unit='ms'),
+                                'entry_price': entry.price,
+                                'exit_price': exit_trade.price,
+                                'quantity': entry.quantity,
+                                'pnl': exit_trade.pnl,
+                                'side': entry.side
+                            })
+                    if trades_data:
+                        all_trades_df = pd.DataFrame(trades_data)
+                        print(f"Loaded {len(all_trades_df)} complete trades from storage for plotting")
+            except Exception as e:
+                print(f"Could not load trades from storage: {e}")
+        
         fig_trades = create_trades_plot(
             result.equity_curve,
-            result.trades,
+            all_trades_df,
             strategy_name=strategy_name
         )
         if fig_trades:
@@ -237,7 +266,7 @@ def create_trades_plot(
     ax2 = plt.subplot2grid((5, 2), (3, 0), rowspan=2)
     ax3 = plt.subplot2grid((5, 2), (3, 1), rowspan=2)
     
-    # NOTE: Top Plot: Equity Curve with Clean Trade Visualization
+    # NOTE: Top Plot: Equity Curve with Best Trade Highlighted
     if equity_curve is not None and not equity_curve.empty:
         equity_col = None
         for col in ['total_value', 'equity', 'portfolio_value']:
@@ -250,45 +279,63 @@ def create_trades_plot(
                     color=COLORS['strategy'], linewidth=2, 
                     label='Portfolio Value', zorder=2)
             
+            # NOTE: Show only the most profitable trade
             try:
-                for idx, trade in trades_df.iterrows():
-                    if idx > 20:
-                        break
-                        
-                    entry_time = pd.to_datetime(trade['entry_time'])
-                    exit_time = pd.to_datetime(trade['exit_time'])
+                if 'pnl' in trades_df.columns and len(trades_df) > 0:
+                    best_trade = trades_df.loc[trades_df['pnl'].idxmax()]
+                    entry_time = pd.to_datetime(best_trade['entry_time'])
+                    exit_time = pd.to_datetime(best_trade['exit_time'])
                     
-                    color = COLORS['profit'] if trade.get('pnl', 0) > 0 else COLORS['loss']
-                    ax1.axvspan(entry_time, exit_time, alpha=0.1, color=color, zorder=1)
+                    ax1.axvspan(entry_time, exit_time, alpha=0.15, 
+                               color=COLORS['profit'], zorder=1,
+                               label=f'Best Trade: ${best_trade["pnl"]:.2f}')
+                    
+                    # NOTE: Add markers for entry and exit points
+                    if entry_time in equity_curve.index:
+                        entry_value = equity_curve.loc[entry_time, equity_col]
+                        ax1.scatter(entry_time, entry_value, color='green', 
+                                   s=100, marker='^', zorder=5, label='Best Entry')
+                    
+                    if exit_time in equity_curve.index:
+                        exit_value = equity_curve.loc[exit_time, equity_col]
+                        ax1.scatter(exit_time, exit_value, color='red', 
+                                   s=100, marker='v', zorder=5, label='Best Exit')
             except:
                 pass
             
+            # NOTE: Calculate stats from ALL trades (not limited)
             total_trades = len(trades_df)
             winning_trades = len(trades_df[trades_df.get('pnl', pd.Series([0])) > 0])
             losing_trades = total_trades - winning_trades
             win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
             
-            stats_text = (f'Total Trades: {total_trades}\n'
-                         f'Winners: {winning_trades}\n'
-                         f'Losers: {losing_trades}\n'
-                         f'Win Rate: {win_rate:.1f}%')
+            # NOTE: Add total PnL and average trade PnL
+            total_pnl = trades_df.get('pnl', pd.Series([0])).sum()
+            avg_pnl = total_pnl / total_trades if total_trades > 0 else 0
+            
+            stats_text = (f'Total Trades: {total_trades:,}\n'
+                         f'Winners: {winning_trades:,}\n'
+                         f'Losers: {losing_trades:,}\n'
+                         f'Win Rate: {win_rate:.1f}%\n'
+                         f'Total PnL: ${total_pnl:,.2f}\n'
+                         f'Avg PnL: ${avg_pnl:.2f}')
             
             ax1.text(0.02, 0.98, stats_text, transform=ax1.transAxes,
                     fontsize=10, verticalalignment='top',
                     bbox=dict(boxstyle='round', facecolor='white', alpha=0.9))
             
             ax1.set_ylabel('Portfolio Value ($)', fontsize=11)
-            ax1.set_title(f'{strategy_name} - Equity Curve with Trade Periods', 
+            ax1.set_title(f'{strategy_name} - Equity Curve with Best Trade Highlighted', 
                          fontsize=13, fontweight='bold')
             ax1.legend(loc='upper right', fontsize=10)
             ax1.grid(True, alpha=0.3)
             
             format_date_axis(ax1, equity_curve.index)
     
-    # NOTE: Bottom Left: Trade Duration Distribution
+    # NOTE: Bottom Left: Trade Duration Distribution (ALL trades)
     plot_trade_durations(ax2, trades_df)
     
-    # NOTE: Bottom Right: Trade Returns Distribution
+    # NOTE: Bottom Right: Trade Returns Distribution (ALL trades)
     plot_trade_returns(ax3, trades_df)
     
     plt.suptitle(f'{strategy_name} - Trade Analysis', fontsize=15, fontweight='bold')
@@ -307,7 +354,8 @@ def plot_trade_durations(ax, trades_df):
             durations = durations[durations.notna() & (durations > 0)]
             
             if len(durations) > 0:
-                n, bins, patches = ax.hist(durations, bins=min(30, len(durations)), 
+                n_bins = min(50, max(10, len(durations) // 100))
+                n, bins, patches = ax.hist(durations, bins=n_bins, 
                                           color=COLORS['neutral'], alpha=0.7, 
                                           edgecolor='black', linewidth=0.5)
                 
@@ -330,9 +378,19 @@ def plot_trade_durations(ax, trades_df):
                 
                 ax.set_xlabel('Trade Duration (hours)', fontsize=10)
                 ax.set_ylabel('Frequency', fontsize=10)
-                ax.set_title('Trade Duration Distribution', fontsize=11, fontweight='bold')
+                ax.set_title(f'Trade Duration Distribution ({len(durations):,} trades)', 
+                           fontsize=11, fontweight='bold')
                 ax.legend(fontsize=9)
                 ax.grid(True, alpha=0.3, axis='y')
+                
+                p25, p50, p75, p95 = np.percentile(durations, [25, 50, 75, 95])
+                info_text = (f'P25: {p25:.1f}h\n'
+                           f'P50: {p50:.1f}h\n'
+                           f'P75: {p75:.1f}h\n'
+                           f'P95: {p95:.1f}h')
+                ax.text(0.98, 0.98, info_text, transform=ax.transAxes,
+                       fontsize=8, verticalalignment='top', horizontalalignment='right',
+                       bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
                 
                 return
     except Exception as e:
@@ -370,7 +428,9 @@ def plot_trade_returns(ax, trades_df):
                 
                 all_returns = returns_pct.values
                 min_ret, max_ret = all_returns.min(), all_returns.max()
-                bins = np.linspace(min_ret - 1, max_ret + 1, min(31, len(returns_pct)))
+                
+                n_bins = min(50, max(15, len(returns_pct) // 100))
+                bins = np.linspace(min_ret - 1, max_ret + 1, n_bins)
                 
                 if len(profits) > 0:
                     ax.hist(profits, bins=bins, color=COLORS['profit'], 
@@ -402,7 +462,8 @@ def plot_trade_returns(ax, trades_df):
                 
                 ax.set_xlabel('Trade Returns (%)', fontsize=10)
                 ax.set_ylabel('Frequency', fontsize=10)
-                ax.set_title('Trade Returns Distribution', fontsize=11, fontweight='bold')
+                ax.set_title(f'Trade Returns Distribution ({len(returns_pct):,} trades)', 
+                           fontsize=11, fontweight='bold')
                 ax.legend(fontsize=9)
                 ax.grid(True, alpha=0.3, axis='y')
                 
