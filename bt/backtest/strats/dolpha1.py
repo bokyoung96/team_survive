@@ -9,7 +9,7 @@ from backtest.types import ActionType, Signal
 from backtest.timeframe import MultiTimeframeData
 from backtest.logger import get_logger
 from backtest.strategies import StreamingStrategy, TradingContext
-from indicators.indicators import MovingAverage
+from indicators.indicators import SMA
 
 
 class GoldenCrossStrategy(StreamingStrategy):
@@ -84,13 +84,13 @@ class GoldenCrossStrategy(StreamingStrategy):
     def _initialize_indicators(self):
         # NOTE: Daily MA indicators
         self._daily_ma_indicators = {
-            period: MovingAverage(name=f"ma_{period}", length=period)
+            period: SMA(name=f"ma_{period}", length=period)
             for period in self.parameters["ma_periods"]["daily"]
         }
         
         # NOTE: MTF MA indicators
         self._mtf_ma_indicators = {
-            f"{tf}_{period}": MovingAverage(name=f"ma_{tf}_{period}", length=period)
+            f"{tf}_{period}": SMA(name=f"ma_{tf}_{period}", length=period)
             for tf, period in self.MTF_PERIODS.items()
         }
 

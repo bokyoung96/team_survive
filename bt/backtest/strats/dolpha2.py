@@ -7,7 +7,7 @@ from collections import deque
 from backtest.types import ActionType, Signal
 from backtest.logger import get_logger
 from backtest.strategies import StreamingStrategy, TradingContext
-from indicators.indicators import MovingAverage
+from indicators.indicators import SMA
 
 
 class GoldenCrossOnlyStrategy(StreamingStrategy):
@@ -67,7 +67,7 @@ class GoldenCrossOnlyStrategy(StreamingStrategy):
     def _initialize_indicators(self):
         # NOTE: Daily MA indicators
         self._daily_ma_indicators = {
-            period: MovingAverage(name=f"ma_{period}", length=period)
+            period: SMA(name=f"ma_{period}", length=period)
             for period in self.parameters["ma_periods"]
         }
 
