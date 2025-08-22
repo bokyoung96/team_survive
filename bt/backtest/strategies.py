@@ -38,7 +38,7 @@ class StreamingStrategy(ABC):
         self.name = name
         self.parameters = parameters or {}
         self.lookback_periods = lookback_periods
-        self._trade_history: deque = deque(maxlen=1000)  # Store actual trade results
+        self._trade_history: deque = deque(maxlen=1000)
         self._indicator_cache: Dict[str, Any] = {}
         self._state: Dict[str, Any] = {}
 
@@ -73,20 +73,16 @@ class StreamingStrategy(ABC):
 
 
     def record_signal(self, timestamp: datetime, signal: Signal) -> None:
-        """Backward compatibility - just pass for now"""
         pass
 
     def record_trade(self, timestamp: datetime, trade_data: Dict[str, Any]) -> None:
-        """Record actual trade execution data"""
         self._trade_history.append((timestamp, trade_data))
 
     @property
     def signals_history(self) -> List:
-        """Backward compatibility - return empty list"""
         return []
 
     @property
     def trade_history(self) -> List[Tuple[datetime, Dict[str, Any]]]:
-        """Get actual trade execution history"""
         return list(self._trade_history)
 
