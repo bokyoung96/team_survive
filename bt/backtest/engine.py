@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Optional, Dict, List, Any
 import pandas as pd
+import polars as pl
 from tqdm import tqdm
 
 from backtest.models import (
@@ -107,8 +108,16 @@ class BacktestEngine:
         equity_df = pd.DataFrame(equity_curve)
         if not equity_df.empty:
             equity_df.set_index("timestamp", inplace=True)
-            running_max = equity_df["total_value"].expanding().max()
-            equity_df["drawdown"] = (equity_df["total_value"] - running_max) / running_max
+            
+            temp = pl.from_pandas(equity_df[["total_value"]])
+            
+            result = temp.with_columns([
+                pl.col("total_value").cum_max().alias("running_max")
+            ]).with_columns([
+                ((pl.col("total_value") - pl.col("running_max")) / pl.col("running_max")).alias("drawdown")
+            ])
+            
+            equity_df["drawdown"] = result["drawdown"].to_pandas().values
         
         trades_df = pd.DataFrame(trades) if trades else pd.DataFrame()
         
@@ -176,7 +185,7 @@ class BacktestEngine:
         symbol: str,
         warmup_periods: int = 50,
         storage=None
-    ) -> BacktestResult:
+    ) -> BacktestResult:        
         self._validate_inputs(ohlcv_data, initial_capital, symbol, strategy)
         
         # NOTE: Set trade storage if provided
@@ -189,7 +198,7 @@ class BacktestEngine:
         
         strategy.reset_state()
         
-        # NOTE: Run backtest loop
+        # NOTE: Run backtest loop with performance tracking
         self._run_loop(
             strategy, 
             ohlcv_data, 
@@ -202,7 +211,8 @@ class BacktestEngine:
         
         self._close_final_position(portfolio, symbol, ohlcv_data, trades)
         
-        return self._build_result(portfolio, equity_curve, trades, symbol, initial_capital, strategy)
+        result = self._build_result(portfolio, equity_curve, trades, symbol, initial_capital, strategy)
+        return result
     
     def _run_loop(
         self,
@@ -223,8 +233,14 @@ class BacktestEngine:
         last_signal_timestamp = None
         last_equity_date = None
         
+        temp = pl.from_pandas(ohlcv_data)
+        rows_iterator = temp.iter_rows(named=True)
+        timestamps = ohlcv_data.index.to_numpy()
+        
         with tqdm(total=total_bars, desc="Running Backtest") as pbar:
-            for i, (timestamp, bar) in enumerate(ohlcv_data.iterrows()):
+            for i, row_dict in enumerate(rows_iterator):
+                timestamp = timestamps[i]
+                bar = pd.Series(row_dict)
                 
                 current_position = portfolio.get_position(symbol)
                 

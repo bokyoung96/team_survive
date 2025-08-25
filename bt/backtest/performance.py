@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Dict, Any
 import pandas as pd
 import numpy as np
+import polars as pl
 from scipy import stats
 
 
@@ -36,13 +37,17 @@ class PerformanceAnalyzer:
         self.risk_free_rate = risk_free_rate
     
     def calculate_returns(self, equity_curve: pd.DataFrame) -> pd.Series:
-        if "total_value" in equity_curve.columns:
-            returns = equity_curve["total_value"].pct_change()
-        elif "equity" in equity_curve.columns:
-            returns = equity_curve["equity"].pct_change()
-        else:
+        # Use polars for faster pct_change calculation
+        col_name = "total_value" if "total_value" in equity_curve.columns else "equity"
+        if col_name not in equity_curve.columns:
             raise ValueError("Equity curve must have 'total_value' or 'equity' column")
         
+        temp = pl.from_pandas(equity_curve[[col_name]])
+        returns_pl = temp.select(
+            pl.col(col_name).pct_change().alias("returns")
+        )
+        returns = returns_pl["returns"].to_pandas()
+        returns.index = equity_curve.index
         return returns.fillna(0)
     
     def calculate_sharpe_ratio(
@@ -98,12 +103,21 @@ class PerformanceAnalyzer:
         else:
             raise ValueError("Equity curve must have 'total_value' or 'equity' column")
         
-        running_max = equity.expanding().max()
+        temp = pl.from_pandas(pd.DataFrame({'equity': equity}))
+        result = temp.with_columns([
+            pl.col("equity").cum_max().alias("running_max")
+        ]).with_columns([
+            pl.when(pl.col("running_max") != 0)
+            .then((pl.col("equity") - pl.col("running_max")) / pl.col("running_max"))
+            .otherwise(0.0)
+            .alias("drawdown")
+        ])
         
-        drawdown = pd.Series(index=equity.index, dtype=float)
-        mask = running_max != 0
-        drawdown[mask] = (equity[mask] - running_max[mask]) / running_max[mask]
-        drawdown[~mask] = 0.0
+        running_max = result["running_max"].to_pandas()
+        running_max.index = equity.index
+        
+        drawdown = result["drawdown"].to_pandas()
+        drawdown.index = equity.index
         
         max_dd = drawdown.min()
         max_dd_idx = drawdown.idxmin()
@@ -143,26 +157,42 @@ class PerformanceAnalyzer:
             }
         
         if "pnl" in trades.columns:
-            pnl = trades["pnl"]
+            pnl_col = "pnl"
         elif "realized_pnl" in trades.columns:
-            pnl = trades["realized_pnl"]
+            pnl_col = "realized_pnl"
         else:
             if all(col in trades.columns for col in ["entry_price", "exit_price", "quantity"]):
                 pnl = (trades["exit_price"] - trades["entry_price"]) * trades["quantity"]
+                pnl_col = None
             else:
                 raise ValueError("Trades must have P&L information")
         
-        winning_trades = pnl[pnl > 0]
-        losing_trades = pnl[pnl < 0]
+        if pnl_col:
+            temp = pl.from_pandas(trades[[pnl_col]])
+            temp = temp.rename({pnl_col: "pnl"})
+        else:
+            temp = pl.from_pandas(pd.DataFrame({"pnl": pnl}))
         
-        total_trades = len(trades)
-        num_winners = len(winning_trades)
-        num_losers = len(losing_trades)
+        stats = temp.select([
+            pl.col("pnl").count().alias("total_trades"),
+            pl.col("pnl").filter(pl.col("pnl") > 0).count().alias("num_winners"),
+            pl.col("pnl").filter(pl.col("pnl") < 0).count().alias("num_losers"),
+            pl.col("pnl").filter(pl.col("pnl") > 0).sum().alias("total_wins"),
+            pl.col("pnl").filter(pl.col("pnl") < 0).sum().alias("total_losses"),
+            pl.col("pnl").filter(pl.col("pnl") > 0).mean().alias("avg_win"),
+            pl.col("pnl").filter(pl.col("pnl") < 0).mean().alias("avg_loss"),
+            pl.col("pnl").filter(pl.col("pnl") > 0).max().alias("largest_win"),
+            pl.col("pnl").filter(pl.col("pnl") < 0).min().alias("largest_loss"),
+        ]).to_dicts()[0]
+        
+        total_trades = stats["total_trades"]
+        num_winners = stats["num_winners"] or 0
+        num_losers = stats["num_losers"] or 0
         
         win_rate = num_winners / total_trades if total_trades > 0 else 0.0
         
-        total_wins = winning_trades.sum() if num_winners > 0 else 0
-        total_losses = abs(losing_trades.sum()) if num_losers > 0 else 0
+        total_wins = stats["total_wins"] or 0
+        total_losses = abs(stats["total_losses"] or 0)
         
         if total_losses > 0:
             profit_factor = total_wins / total_losses
@@ -171,11 +201,10 @@ class PerformanceAnalyzer:
         else:
             profit_factor = 0.0
         
-        avg_win = winning_trades.mean() if num_winners > 0 else 0.0
-        avg_loss = losing_trades.mean() if num_losers > 0 else 0.0
-        
-        largest_win = winning_trades.max() if num_winners > 0 else 0.0
-        largest_loss = losing_trades.min() if num_losers > 0 else 0.0
+        avg_win = stats["avg_win"] or 0.0
+        avg_loss = stats["avg_loss"] or 0.0
+        largest_win = stats["largest_win"] or 0.0
+        largest_loss = stats["largest_loss"] or 0.0
         
         avg_duration = 0.0
         if "entry_time" in trades.columns and "exit_time" in trades.columns:
