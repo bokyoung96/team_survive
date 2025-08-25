@@ -12,6 +12,7 @@ from utils import KST
 from backtest.timeframe import MultiTimeframeData
 from backtest.strats.dolpha1 import GoldenCrossStrategy
 from backtest.strats.dolpha2 import GoldenCrossOnlyStrategy
+from backtest.strats.dolpha3 import Dolpha3Strategy
 from backtest.types import TransactionCost
 from backtest.engine import BacktestEngine
 from backtest.plot import generate_plots
@@ -40,7 +41,7 @@ def main(strategy_choice=2):
                 .add(symbol, TimeFrame.H1, date_range))
         strategy = GoldenCrossStrategy(data=data)
         strategy_name = "GoldenCrossStrategy"
-    else:
+    elif choice == "2":
         data = MultiTimeframeData(loader).add(symbol, TimeFrame.D1, date_range)
         strategy = GoldenCrossOnlyStrategy()
         strategy_name = "GoldenCrossOnlyStrategy"
@@ -59,7 +60,7 @@ def main(strategy_choice=2):
     
     if choice == "1":
         ohlcv_data = data["3m"]
-    else:
+    elif choice == "2":
         ohlcv_data = data["1d"]
     
     result = engine.run_backtest(

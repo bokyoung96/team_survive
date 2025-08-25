@@ -84,13 +84,14 @@ class GoldenCrossOnlyStrategy(StreamingStrategy):
     
     def _calculate_daily_mas(self) -> None:
         buffer_len = len(self._daily_price_buffer)
-        if buffer_len < min(self.parameters["ma_periods"]):
+        if buffer_len == 0:
             return
         
-        price_list = list(self._daily_price_buffer)
-        for period in self.parameters["ma_periods"]:
-            if buffer_len >= period:
-                ma_value = sum(price_list[-period:]) / period
+        latest_price = self._daily_price_buffer[-1]
+        
+        for period, indicator in self._daily_ma_indicators.items():
+            ma_value = indicator.update(latest_price)
+            if ma_value is not None:
                 self.set_indicator_value(f"ma_{period}", ma_value)
         
     def process_bar(self, context: TradingContext) -> Optional[Signal]:
