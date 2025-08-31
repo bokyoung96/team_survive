@@ -6,13 +6,11 @@ from typing import Optional, Dict, Any
 
 class ActionType(Enum):
     BUY = "buy"
-    SELL = "sell"
+    SHORT = "short"
+    SELL = "sell" 
     CLOSE = "close"
     CLOSE_LONG = "close_long"
     CLOSE_SHORT = "close_short"
-    HOLD = "hold"
-    ENTRY = "entry"
-    EXIT = "exit"
 
 
 class OrderType(Enum):
@@ -48,11 +46,11 @@ class Signal:
     
     @property
     def is_entry(self) -> bool:
-        return self.type in [ActionType.BUY, ActionType.SELL, ActionType.ENTRY]
+        return self.type in [ActionType.BUY, ActionType.SHORT]
     
     @property
     def is_exit(self) -> bool:
-        return self.type in [ActionType.CLOSE, ActionType.CLOSE_LONG, ActionType.CLOSE_SHORT, ActionType.EXIT]
+        return self.type in [ActionType.SELL, ActionType.CLOSE, ActionType.CLOSE_LONG, ActionType.CLOSE_SHORT]
 
 
 @dataclass(frozen=True)

@@ -1,3 +1,6 @@
+# Ignore article folder
+article
+
 # Ignore batch files
 *.bat
 

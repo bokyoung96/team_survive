@@ -12,6 +12,7 @@ from utils import KST
 from backtest.timeframe import MultiTimeframeData
 from backtest.strats.dolpha1 import GoldenCrossStrategy
 from backtest.strats.dolpha2 import GoldenCrossOnlyStrategy
+from backtest.strats.arbitrage1 import PairsTradingStrategy
 from backtest.strats.dolpha3 import Dolpha3Strategy
 from backtest.types import TransactionCost
 from backtest.engine import BacktestEngine
@@ -20,7 +21,7 @@ from backtest.storage import TradeStorage
 from main.save import generate_report
 
 
-def main(strategy_choice=2):
+def main(strategy_choice=1):
     choice = str(strategy_choice)
     
     exchange = Exchange(id="binance", default_type=MarketType.SWAP)
@@ -41,18 +42,56 @@ def main(strategy_choice=2):
                 .add(symbol, TimeFrame.H1, date_range))
         strategy = GoldenCrossStrategy(data=data)
         strategy_name = "GoldenCrossStrategy"
+    elif choice == "3":
+        # NOTE: PoW: BTC, LTC, BCH, DOGE, ETC (Mining-based consensus)
+        # NOTE: PoS: ETH, BNB, ADA, SOL, DOT (Staking-based consensus)
+        crypto_universe = [
+            "BTC/USDT",  # Bitcoin (PoW) - Market leader
+            "ETH/USDT",  # Ethereum (PoS) - Smart contracts leader
+            "BNB/USDT",  # Binance Coin (PoS) - Exchange token
+            "ADA/USDT",  # Cardano (PoS) - Academic blockchain
+            "SOL/USDT",  # Solana (PoS) - High-performance blockchain
+            "DOT/USDT",  # Polkadot (PoS) - Interoperability
+            "LTC/USDT",  # Litecoin (PoW) - Bitcoin fork
+            "BCH/USDT",  # Bitcoin Cash (PoW) - Scalability fork
+            "DOGE/USDT", # Dogecoin (PoW) - Meme/community coin
+            "ETC/USDT"   # Ethereum Classic (PoW) - Original Ethereum
+        ]
+        
+        print(f"Loading data for {len(crypto_universe)} cryptocurrencies...")
+        data = MultiTimeframeData(loader)
+        
+        for crypto_symbol in crypto_universe:
+            try:
+                crypto_sym = Symbol.from_string(crypto_symbol)
+                data.add(crypto_sym, TimeFrame.D1, date_range)
+                print(f"✓ Loaded {crypto_symbol}")
+            except Exception as e:
+                print(f"✗ Failed to load {crypto_symbol}: {e}")
+        
+        strategy = PairsTradingStrategy(
+            data=data,
+            crypto_universe=crypto_universe,
+            max_pairs=5,
+            rebalance_frequency=30,
+            optimize_lookback=True,
+            use_volatility_filter=True,
+            use_trailing_stop=True
+        )
+        strategy_name = "MultiPairTradingStrategy"
     elif choice == "2":
         data = MultiTimeframeData(loader).add(symbol, TimeFrame.D1, date_range)
         strategy = GoldenCrossOnlyStrategy()
         strategy_name = "GoldenCrossOnlyStrategy"
     
-    engine = BacktestEngine(
-        transaction_cost=TransactionCost(
-            maker_fee=Decimal("0.0001"),
-            taker_fee=Decimal("0.0001"),
-            slippage=Decimal("0.0001")
-        )
+
+    transaction_cost = TransactionCost(
+        maker_fee=Decimal("0.0000"),
+        taker_fee=Decimal("0.0000"),
+        slippage=Decimal("0.0000")
     )
+    
+    engine = BacktestEngine(transaction_cost=transaction_cost)
     
     storage = TradeStorage(base_dir="bt_results")
     session_id = f"backtest_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -60,7 +99,7 @@ def main(strategy_choice=2):
     
     if choice == "1":
         ohlcv_data = data["3m"]
-    elif choice == "2":
+    elif choice == "2" or choice == "3":
         ohlcv_data = data["1d"]
     
     result = engine.run_backtest(
@@ -91,5 +130,5 @@ def main(strategy_choice=2):
 
 
 if __name__ == "__main__":
-    strategy_choice = 1
+    strategy_choice = 3
     result = main(strategy_choice)
