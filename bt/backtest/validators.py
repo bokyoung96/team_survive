@@ -12,7 +12,7 @@ from backtest.types import ActionType, OrderStatus
 class MarketRules:
     """Market-specific trading rules and constraints."""
     min_order_size: Decimal = Decimal("0.000001")  # More flexible for small orders
-    max_order_size: Decimal = Decimal("1000000")
+    max_order_size: Decimal = Decimal("100000000")  # Increased for large portfolios
     min_notional: Decimal = Decimal("1")  # Reduced from 10 to 1
     max_leverage: Decimal = Decimal("10")
     tick_size: Decimal = Decimal("0.01")

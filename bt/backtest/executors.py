@@ -94,10 +94,8 @@ class SignalProcessor:
         # NOTE: Determine order side based on signal type
         if signal.type == ActionType.BUY:
             side = ActionType.BUY
-        elif signal.type == ActionType.SELL:
-            side = ActionType.SELL
-        elif signal.type == ActionType.ENTRY:
-            side = ActionType.BUY
+        elif signal.type == ActionType.SHORT:
+            side = ActionType.SHORT
         else:
             self.logger.warning(f"Unsupported entry signal type: {signal.type}")
             return None
@@ -183,7 +181,7 @@ class OrderCreator:
         symbol: str
     ) -> Tuple[Optional[ActionType], Decimal]:
         # NOTE: Create exit order
-        if signal_type in [ActionType.SELL, ActionType.EXIT, ActionType.CLOSE]:
+        if signal_type in [ActionType.SELL, ActionType.CLOSE]:
             position = portfolio.get_position(symbol)
             if not position or not position.is_open:
                 return None, Decimal("0")
@@ -192,9 +190,15 @@ class OrderCreator:
             side = ActionType.SELL if position.side == ActionType.BUY else ActionType.BUY
             return side, quantity
         
-        # NOTE: Create entry order
-        elif signal_type in [ActionType.BUY, ActionType.ENTRY]:
-            side = ActionType.BUY if signal_type == ActionType.BUY else ActionType.SELL
+        # NOTE: Create long entry order
+        elif signal_type == ActionType.BUY:
+            side = ActionType.BUY
+            quantity = Decimal("-1")
+            return side, quantity
+        
+        # NOTE: Create short entry order
+        elif signal_type == ActionType.SHORT:
+            side = ActionType.SELL
             quantity = Decimal("-1")
             return side, quantity
         
