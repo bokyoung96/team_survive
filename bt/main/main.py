@@ -13,6 +13,7 @@ from backtest.timeframe import MultiTimeframeData
 from backtest.strats.dolpha1 import GoldenCrossStrategy
 from backtest.strats.dolpha2 import GoldenCrossOnlyStrategy
 from backtest.strats.arbitrage1 import PairsTradingStrategy
+from backtest.strats.dolpha3 import Dolpha3Strategy
 from backtest.types import TransactionCost
 from backtest.engine import BacktestEngine
 from backtest.plot import generate_plots
@@ -78,7 +79,7 @@ def main(strategy_choice=1):
             use_trailing_stop=True
         )
         strategy_name = "MultiPairTradingStrategy"
-    else:
+    elif choice == "2":
         data = MultiTimeframeData(loader).add(symbol, TimeFrame.D1, date_range)
         strategy = GoldenCrossOnlyStrategy()
         strategy_name = "GoldenCrossOnlyStrategy"

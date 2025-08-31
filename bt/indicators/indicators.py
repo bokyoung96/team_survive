@@ -2,8 +2,10 @@ import numpy as np
 import pandas as pd
 import numba as nb
 import polars as pl
-from typing import List, Dict
+from typing import List, Dict, Optional, Union
 from abc import ABC, abstractmethod
+from collections import deque
+import numpy as np
 from core.protocols import TechnicalIndicator
 
 
@@ -102,6 +104,8 @@ class SMA(RollingWindowIndicator):
     def __init__(self, name: str, length: int = 20):
         super().__init__(name, length)
         self._length = length
+        self._buffer = deque(maxlen=length)
+        self._sum = 0.0
     
     def _compute(self, ohlcv: pd.DataFrame) -> pd.DataFrame:
         temp = pl.from_pandas(ohlcv[["close"]])
@@ -110,6 +114,33 @@ class SMA(RollingWindowIndicator):
         ).to_pandas()
         ma.index = ohlcv.index
         return ma
+    
+    def update(self, price: float) -> Optional[float]:
+        old_len = len(self._buffer)
+        
+        if old_len == self._length:
+            self._sum -= self._buffer[0]
+        
+        self._buffer.append(price)
+        self._sum += price
+        
+        if len(self._buffer) >= self._length:
+            return self._sum / self._length
+        elif len(self._buffer) > 0:
+            return self._sum / len(self._buffer)
+        return None
+    
+    def get_current(self) -> Optional[float]:
+        if len(self._buffer) >= self._length:
+            return self._sum / self._length
+        elif len(self._buffer) > 0:
+            return self._sum / len(self._buffer)
+        return None
+    
+    def reset(self) -> None:
+        super().reset()
+        self._buffer.clear()
+        self._sum = 0.0
 
 
 class EMA(RollingWindowIndicator):
