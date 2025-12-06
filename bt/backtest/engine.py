@@ -105,6 +105,9 @@ class BacktestEngine:
         initial_capital: Decimal,
         strategy: Optional[Any] = None
     ) -> BacktestResult:
+        if self.storage:
+            self.storage._flush_buffer()
+            self.storage.close()
         equity_df = pd.DataFrame(equity_curve)
         if not equity_df.empty:
             equity_df.set_index("timestamp", inplace=True)
@@ -379,7 +382,7 @@ class BacktestEngine:
             if len(trades) > self.max_trades_limit:
                 trades.pop(0)
             
-            # NOTE: Record all trades to storage if available
+            # NOTE: Record all trades to storage if available (buffered)
             if self.storage:
                 from backtest.storage import Trade
                 storage_trade = Trade(
