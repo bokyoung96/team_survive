@@ -1,0 +1,22 @@
+{
+  "strategy": {
+    "module": "execution.strategy.cpo",
+    "class": "CpoStrategy",
+    "params": {
+      "window": 20,
+      "timeframe": "1m",
+      "min_history": 25,
+      "confidence_scale": 1.0
+    }
+  },
+  "trading": {
+    "symbol": "BTCUSDT",
+    "leverage": 1,
+    "poll_interval_seconds": 10.0,
+    "quote_currency": "USDT",
+    "order_fraction": 0.02,
+    "max_position": null,
+    "log_level": "INFO",
+    "balance_bucket": "total"
+  }
+}

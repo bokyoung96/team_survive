@@ -83,6 +83,8 @@ class TradeStorage:
         self.mmap_path = None
         self.trade_count = 0
         self.session_id = None
+        self._buffer: List[Trade] = []
+        self._flush_every = 200
     
     def initialize_session(self, session_id: str):
         self.session_id = session_id
@@ -124,15 +126,22 @@ class TradeStorage:
         if self.mmap_array is None:
             raise RuntimeError("Session not initialized. Call initialize_session first.")
         
-        if self.trade_count >= len(self.mmap_array):
+        self._buffer.append(trade)
+        if len(self._buffer) >= self._flush_every:
+            self._flush_buffer()
+
+    def _flush_buffer(self):
+        if not self._buffer or self.mmap_array is None:
+            return
+        needed = self.trade_count + len(self._buffer)
+        while needed >= len(self.mmap_array):
             self._expand_mmap()
-        
-        trade_bytes = trade.to_bytes()
-        self.mmap_array[self.trade_count] = np.frombuffer(trade_bytes, dtype='uint8')
-        self.trade_count += 1
-        
-        if self.trade_count % 100 == 0:
-            self.mmap_array.flush()
+        for trade in self._buffer:
+            trade_bytes = trade.to_bytes()
+            self.mmap_array[self.trade_count] = np.frombuffer(trade_bytes, dtype='uint8')
+            self.trade_count += 1
+        self._buffer.clear()
+        self.mmap_array.flush()
     
     def _expand_mmap(self):
         current_capacity = len(self.mmap_array)
@@ -182,6 +191,7 @@ class TradeStorage:
         return trades
     
     def close(self):
+        self._flush_buffer()
         if self.mmap_array is not None:
             self.mmap_array.flush()
             del self.mmap_array

@@ -1,3 +1,6 @@
+# Ignore config
+config.json
+
 # Ignore article folder
 article
 

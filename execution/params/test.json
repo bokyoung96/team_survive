@@ -1,0 +1,21 @@
+{
+  "strategy": {
+    "module": "execution.strategy.test",
+    "class": "TestStrategy",
+    "params": {
+      "side": "SELL",
+      "once": true,
+      "confidence": 1.0
+    }
+  },
+  "trading": {
+    "symbol": "KERNELUSDT",
+    "leverage": 2,
+    "poll_interval_seconds": 5.0,
+    "quote_currency": "USDT",
+    "order_fraction": 0.01,
+    "max_position": null,
+    "log_level": "INFO",
+    "balance_bucket": "total"
+  }
+}
